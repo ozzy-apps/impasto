@@ -1,0 +1,7 @@
+# Build output and packages (the packages go on the releases page)
+/build/
+/build-*/
+/AppDir/
+/dist/
+/.flatpak-builder/
+*.AppImage

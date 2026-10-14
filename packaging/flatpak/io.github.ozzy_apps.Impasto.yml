@@ -1,0 +1,28 @@
+app-id: io.github.ozzy_apps.Impasto
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: impasto
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # The gallery lives in the Pictures folder; anything else goes through the file portal.
+  - --filesystem=xdg-pictures
+modules:
+  - name: impasto
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - build
+          - build-release
+          - build-flatpak
+          - dist
+          - AppDir
+          - .flatpak-builder
+          - .git

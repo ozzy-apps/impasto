@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Impasto
+GenericName=Digital Painting
+Comment=Paint and draw with a pen tablet
+Exec=impasto %f
+Icon=io.github.ozzy_apps.Impasto
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+Keywords=paint;draw;sketch;illustration;tablet;brush;
+MimeType=application/x-impasto;image/vnd.adobe.photoshop;image/openraster;image/png;image/jpeg;image/webp;
+StartupWMClass=impasto

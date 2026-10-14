@@ -1,0 +1,29 @@
+<RCC>
+    <qresource prefix="/">
+        <file>shaders/fullscreen.vert</file>
+        <file>shaders/blend.glsl</file>
+        <file>shaders/composite.frag</file>
+        <file>shaders/merge.frag</file>
+        <file>shaders/occupancy.frag</file>
+        <file>shaders/present.frag</file>
+        <file>shaders/dab.vert</file>
+        <file>shaders/tip.glsl</file>
+        <file>shaders/dab.frag</file>
+        <file>shaders/smudge.frag</file>
+        <file>shaders/thumb.frag</file>
+        <file>shaders/flip.frag</file>
+        <file>shaders/transform.frag</file>
+        <file>shaders/hsb.frag</file>
+        <file>shaders/blur.frag</file>
+        <file>shaders/maskmix.frag</file>
+        <file>shaders/invert.frag</file>
+        <file>shaders/flooddist.frag</file>
+        <file>shaders/adjust.frag</file>
+        <file>shaders/gradient.frag</file>
+        <file>shaders/liquify.frag</file>
+        <file>shaders/liquifyapply.frag</file>
+        <file>shaders/warp.vert</file>
+        <file>shaders/warp.frag</file>
+        <file>icons/app.svg</file>
+    </qresource>
+</RCC>

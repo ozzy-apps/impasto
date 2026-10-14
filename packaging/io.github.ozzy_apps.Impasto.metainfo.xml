@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ozzy_apps.Impasto</id>
+  <name>Impasto</name>
+  <summary>Paint and draw with a pen tablet</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.ozzy_apps">
+    <name>ozzy-apps</name>
+  </developer>
+  <description>
+    <p>
+      Impasto is a painting app for pen tablets in the spirit of Procreate: a full-window
+      canvas, brushes that respond to pressure and tilt, and tools that keep out of the way.
+      It paints on the graphics card at 16 bits a channel.
+    </p>
+    <ul>
+      <li>115 brushes in 14 sets, and a Brush Lab to make your own</li>
+      <li>Layers with masks, groups, clipping and 26 blend modes</li>
+      <li>QuickShape: hold the pen at the end of a stroke for a clean line, curve or shape</li>
+      <li>Symmetry, perspective guides, selections, fills, gradients, text and liquify</li>
+      <li>Opens and saves Photoshop (PSD/PSB) and OpenRaster files</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.ozzy_apps.Impasto.desktop</launchable>
+  <url type="homepage">https://github.com/ozzy-apps/impasto</url>
+  <url type="bugtracker">https://github.com/ozzy-apps/impasto/issues</url>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>tablet</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">1024</display_length>
+  </requires>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/ozzy-apps/impasto/main/docs/screenshot-brush-lab-shape.png</image>
+      <caption>The Brush Lab</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/ozzy-apps/impasto/main/docs/screenshot-layers.png</image>
+      <caption>Layers</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.9.0" date="2026-10-14">
+      <description>
+        <p>The first public release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
