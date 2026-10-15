@@ -29,6 +29,9 @@ public:
     // into it, to be checked and then bound.
     bool startRig();
     bool finishRig(bool bind);
+    // The figures to choose from: the mannequin, the people built in, the artist's own.
+    void showFigures(bool shown);
+    bool keepAsFigure();
 
 signals:
     void placeRequested(const QImage& image);
@@ -50,6 +53,9 @@ private:
     IconButton* m_twist;
     IconButton* m_rigBtn;
     QWidget* m_tuneRow;
+    QWidget* m_figureRow;
+    IconButton* m_figuresBtn;
+    IconButton* m_keepBtn;
     QWidget* m_rigRow;
     IconButton* m_rigMirror;
     std::vector<QVector3D> m_rigBefore;   // a re-rig cancelled goes back to these

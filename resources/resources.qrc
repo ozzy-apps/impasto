@@ -25,5 +25,7 @@
         <file>shaders/warp.vert</file>
         <file>shaders/warp.frag</file>
         <file>icons/app.svg</file>
+        <file>figures/woman.glb</file>
+        <file>figures/woman.json</file>
     </qresource>
 </RCC>

@@ -286,7 +286,9 @@ that script for what it needs).
   shows the joints to be checked from the front and the side (a joint moved
   moves its twin on the other side), and *Bind* ties the surface to the
   bones, blended where they meet. It then poses like the figure, named poses
-  included, and opens rigged the next time. *Turn* goes round it, *Light* moves the light, *Hard light*
+  included, and opens rigged the next time. *Figures* lists the people to
+  choose from: the mannequin, a woman that comes with Impasto, and any rigged
+  model kept with *Keep*, which stays among them for good. *Turn* goes round it, *Light* moves the light, *Hard light*
   shows it in two tones (the light and shadow shapes), and the lens goes from
   14 mm (strong perspective) to 200 mm (flat). A dashed frame shows what will
   land on the canvas: *Place* puts the model there as a layer of its own to

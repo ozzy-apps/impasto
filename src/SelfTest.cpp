@@ -17,6 +17,7 @@
 #include "io/Zip.h"
 #include "shape/Perspective.h"
 #include "shape/QuickShape.h"
+#include "model/Figures.h"
 #include "model/Model3D.h"
 #include "ui/BrushLab.h"
 #include "ui/CanvasWidget.h"
@@ -3542,6 +3543,54 @@ static std::vector<QVector3D> writeFigureObj(const QString& path, bool facingAwa
             at("thigh.R"), at("shin.R"), at("foot.R"), at("foot.R", {0, -0.05f, 0.17f})};
 }
 
+// A model made into a figure to build in: written as a compact GLB, with its
+// name and joints beside it. The joints come from a settings file where the
+// Rig button kept them (so that any put right by hand stay so), or are fitted.
+int runMakeFigure(const QString& modelPath, const QString& outGlb, const QString& name, const QString& settingsFile)
+{
+    QString error;
+    Model3D model;
+    if (!Model3D::load(modelPath, &model, &error)) {
+        qCritical().noquote() << error;
+        return 1;
+    }
+    std::vector<QVector3D> joints;
+    if (!settingsFile.isEmpty()) {
+        const QSettings kept(settingsFile, QSettings::IniFormat);
+        const QVariantList saved = kept.value(QStringLiteral("model/rigs")).toMap().value(QFileInfo(modelPath).absoluteFilePath()).toList();
+        for (int i = 0; i + 2 < saved.size(); i += 3)
+            joints.emplace_back(saved[i].toFloat(), saved[i + 1].toFloat(), saved[i + 2].toFloat());
+        qInfo().noquote() << (joints.size() == 22 ? "joints from the settings file" : "no joints for it in the settings file: fitting");
+    }
+    if (joints.size() != 22 && !model.fitRig(&joints, &error)) {
+        qCritical().noquote() << "no fit:" << error;
+        return 1;
+    }
+    if (!model.saveGlb(outGlb, &error)) {
+        qCritical().noquote() << error;
+        return 1;
+    }
+    QJsonArray rig;
+    for (const QVector3D& j : joints)
+        rig << j.x() << j.y() << j.z();
+    const QString json = QFileInfo(outGlb).path() + QLatin1Char('/') + QFileInfo(outGlb).completeBaseName() + QStringLiteral(".json");
+    QFile f(json);
+    f.open(QIODevice::WriteOnly);
+    f.write(QJsonDocument(QJsonObject{{"name", name}, {"rig", rig}}).toJson());
+    f.close();
+    // Read back as the app would.
+    Model3D back;
+    const bool loaded = Model3D::load(outGlb, &back, &error);
+    size_t points = 0, triangles = 0;
+    for (const ModelMesh& m : back.meshes) {
+        points += m.positions.size();
+        triangles += m.indices.size() / 3;
+    }
+    const bool bound = loaded && back.bindRig(joints);
+    qInfo().noquote() << QStringLiteral("%1: %2 KB, %3 points, %4 triangles; binds: %5").arg(outGlb).arg(QFileInfo(outGlb).size() / 1024).arg(points).arg(triangles).arg(bound);
+    return bound ? 0 : 1;
+}
+
 // A model rigged as the Rig button would, drawn as fitted (with its
 // skeleton) and in a few of the figure's poses: for looking at by eye.
 int runRigCheck(const QString& path, const QString& outPrefix)
@@ -3822,9 +3871,57 @@ static bool runModelTests(const QString& outPath)
             const float forward = (ankle("foot.L").z() - standing.z()) * (away ? -1.0f : 1.0f);
             walks = forward > 0.08f;
         }
+        if (!away && fitted) {
+            // Written out as a figure would be, it comes back the same shape, its points welded.
+            Model3D plain;
+            Model3D::load(path, &plain, &error);
+            const QString glb = outPath + QStringLiteral(".person.glb");
+            Model3D back;
+            const bool written = plain.saveGlb(glb, &error) && Model3D::load(glb, &back, &error);
+            size_t before = 0, after = 0, triBefore = 0, triAfter = 0;
+            for (const ModelMesh& m : plain.meshes) {
+                before += m.positions.size();
+                triBefore += m.indices.size();
+            }
+            for (const ModelMesh& m : back.meshes) {
+                after += m.positions.size();
+                triAfter += m.indices.size();
+            }
+            QVector3D l0, h0, l1, h1;
+            plain.bounds(&l0, &h0);
+            back.bounds(&l1, &h1);
+            check(QStringLiteral("a model written as GLB comes back with its %1 triangles where they were (%2 points welded to %3)").arg(triAfter / 3).arg(before).arg(after),
+                  written && triAfter == triBefore && after <= before && (l0 - l1).length() < 1e-4f && (h0 - h1).length() < 1e-4f && back.canRig());
+        }
         check(QStringLiteral("rigging an OBJ person (A-pose, facing %1): the joints land within %2 m of the true ones (%3 the furthest; shoulders within 0.10); bound, it looks as it did; walking, its left foot goes forward")
                   .arg(away ? QStringLiteral("away") : QStringLiteral("forward")).arg(worst, 0, 'f', 3).arg(worstName),
               fitted && worst < 0.07f && unchanged && walks);
+    }
+    // The woman built in: listed among the figures, rigged from what comes with her, and posable.
+    {
+        const QVector<figures::Figure> all = figures::list();
+        QString path;
+        for (const figures::Figure& f : all) {
+            if (f.builtIn && f.name == QLatin1String("Woman"))
+                path = f.path;
+        }
+        Model3D woman;
+        std::vector<QVector3D> joints;
+        QString name;
+        const bool listed = !path.isEmpty() && figures::rigFor(path, &joints, &name) && name == QLatin1String("Woman");
+        const bool rigged = listed && Model3D::load(path, &woman, &error) && woman.bindRig(joints) && woman.humanoid && woman.handles.size() == 17;
+        bool walks = false;
+        if (rigged) {
+            int foot = -1;
+            for (size_t i = 0; i < woman.nodes.size(); ++i)
+                if (woman.nodes[i].name == QLatin1String("foot.L"))
+                    foot = int(i);
+            woman.applyFigurePose(QStringLiteral("Stand"));
+            const QVector3D standing = woman.jointPosition(foot, woman.worldTransforms());
+            woman.applyFigurePose(QStringLiteral("Walk"));
+            walks = (woman.jointPosition(foot, woman.worldTransforms()) - standing).length() > 0.05f;
+        }
+        check(QStringLiteral("the woman built in is among the figures, comes with her joints, binds, and walks"), listed && rigged && walks);
     }
     return all;
 }
@@ -4576,8 +4673,9 @@ int runInterchangeSample(const QString& dir)
 
 static void isolateSettings()
 {
-    static QTemporaryDir dir;
+    static QTemporaryDir dir, data;
     qputenv("XDG_CONFIG_HOME", dir.path().toUtf8());
+    qputenv("XDG_DATA_HOME", data.path().toUtf8());   // figures kept, and anything else kept as data
 }
 
 int runSelfTest(const QString& outPath)
@@ -5346,8 +5444,59 @@ static bool runModelUi(MainWindow& window, CanvasEngine& engine, const std::func
             }
             remembered = panel->openModel(personPath) && view->model()->humanoid && view->model()->handles.size() == 17;
         }
+        // The poses work on it too: Walk moves its left foot.
+        bool presets = false;
+        if (remembered) {
+            Model3D* m = view->model();
+            int foot = -1;
+            for (size_t i = 0; i < m->nodes.size(); ++i)
+                if (m->nodes[i].name == QLatin1String("foot.L"))
+                    foot = int(i);
+            const QVector3D before = m->jointPosition(foot, m->worldTransforms());
+            for (IconButton* b : window.findChildren<IconButton*>(QStringLiteral("model-pose"))) {
+                if (b->property("pose").toString() == QLatin1String("Walk") && b->isVisible())
+                    penTap(b, QPointF(b->width() / 2.0, b->height() / 2.0));
+            }
+            presets = (m->jointPosition(foot, m->worldTransforms()) - before).length() > 0.05f;
+        }
+        check(QStringLiteral("the figure's poses work on a model rigged here: Walk moves its foot"), presets);
+        // Kept among the figures, it is listed and opens rigged.
+        auto* keepButton = window.findChild<QWidget*>(QStringLiteral("model-keep"));
+        bool kept = false;
+        if (keepButton && keepButton->isVisible()) {
+            penTap(keepButton, QPointF(keepButton->width() / 2.0, keepButton->height() / 2.0));
+            bool listed = false;
+            for (const figures::Figure& f : figures::list())
+                listed = listed || (!f.builtIn && f.name == QLatin1String("Person") && f.path == view->model()->path);
+            kept = listed && view->model()->humanoid && QFileInfo(view->model()->path).absolutePath() == QDir(figures::ownFolder()).absolutePath()
+                   && !figures::ownFolder().startsWith(QDir::homePath() + QStringLiteral("/.local"));   // never the artist's own folder in a test
+        }
+        check(QStringLiteral("Keep puts a rigged model among the figures, in a folder of the test's own"), kept);
         check(QStringLiteral("a person without joints offers Rig; its skeleton shows to be checked, a joint moved moves its twin, Bind makes it posable, and it opens rigged again"),
               offered && rigging && mirrored && bound && posable && remembered);
+    }
+    // Figures: the mannequin, the woman built in, and the one just kept.
+    {
+        auto* figuresButton = window.findChild<QWidget*>(QStringLiteral("model-figures"));
+        penTap(figuresButton, QPointF(figuresButton->width() / 2.0, figuresButton->height() / 2.0));
+        QStringList names;
+        IconButton* woman = nullptr;
+        for (IconButton* b : window.findChildren<IconButton*>(QStringLiteral("model-figure"))) {
+            if (!b->isVisible())
+                continue;
+            names << b->property("figure").toString();
+            if (b->property("figure").toString() == QLatin1String("Woman"))
+                woman = b;
+        }
+        bool chosen = false;
+        if (woman) {
+            penTap(woman, QPointF(woman->width() / 2.0, woman->height() / 2.0));
+            settle();
+            chosen = view->model() && view->model()->humanoid && view->model()->name == QLatin1String("Woman");
+            capture(QStringLiteral("model-woman"));
+        }
+        check(QStringLiteral("Figures lists %1; the woman opens posable").arg(names.join(QStringLiteral(", "))),
+              names.contains(QStringLiteral("Mannequin")) && names.contains(QStringLiteral("Woman")) && names.contains(QStringLiteral("Person")) && chosen);
     }
     panel->showFigure();
     pop->hidePanel();

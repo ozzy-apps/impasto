@@ -1,5 +1,6 @@
 #include "ui/ModelPanel.h"
 
+#include "model/Figures.h"
 #include "model/Model3D.h"
 #include "ui/ModelView.h"
 #include "ui/Theme.h"
@@ -8,6 +9,7 @@
 
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSettings>
@@ -34,15 +36,23 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
     m_title = new QLabel(tr("3D Reference"), this);
     m_title->setFont(theme::font(17, QFont::DemiBold));
     header->addWidget(m_title, 1);
-    IconButton* figure = textButton(tr("Figure"), tr("The jointed figure, to pose"), "model-figure");
+    m_figuresBtn = textButton(tr("Figures"), tr("People to pose: the mannequin, the ones built in, and your own"), "model-figures");
     IconButton* open = textButton(tr("Open"), tr("A model of your own: glTF, GLB, OBJ or STL"), "model-open");
     IconButton* place = textButton(tr("Place"), tr("The model as the view shows it, without the floor, as a new layer to draw over"), "model-place");
     m_pick = new IconButton(QStringLiteral("eyedropper"), this, 20);
     m_pick->setObjectName(QStringLiteral("model-pick"));
     m_pick->setToolTip(tr("Pick a colour from the model"));
-    for (QWidget* w : {static_cast<QWidget*>(figure), static_cast<QWidget*>(open), static_cast<QWidget*>(place), static_cast<QWidget*>(m_pick)})
+    for (QWidget* w : {static_cast<QWidget*>(m_figuresBtn), static_cast<QWidget*>(open), static_cast<QWidget*>(place), static_cast<QWidget*>(m_pick)})
         header->addWidget(w);
     outer->addLayout(header);
+
+    // The figures, four to a row, shown when Figures is pressed.
+    m_figureRow = new QWidget(this);
+    m_figureRow->setObjectName(QStringLiteral("model-figure-list"));
+    new QGridLayout(m_figureRow);
+    m_figureRow->layout()->setContentsMargins(0, 0, 0, 0);
+    m_figureRow->hide();
+    outer->addWidget(m_figureRow);
 
     m_view = new ModelView(this);
     m_view->setObjectName(QStringLiteral("model-view"));
@@ -67,7 +77,7 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
         b->setProperty("pose", pose);
         poseRow->addWidget(b);
         connect(b, &QAbstractButton::clicked, this, [this, pose] {
-            if (Model3D* m = m_view->model(); m && m->figure) {
+            if (Model3D* m = m_view->model(); m && m->humanoid) {
                 m->applyFigurePose(pose);
                 m_view->modelEdited();
                 keep();
@@ -82,6 +92,8 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
     tuneRow->setContentsMargins(0, 0, 0, 0);
     m_rigBtn = textButton(tr("Rig"), tr("Give a model without joints a skeleton, so that it can be posed"), "model-rig");
     tuneRow->addWidget(m_rigBtn);
+    m_keepBtn = textButton(tr("Keep"), tr("Keep this rigged model among the figures, to choose again any time"), "model-keep");
+    tuneRow->addWidget(m_keepBtn);
     m_twist = textButton(tr("Twist"), tr("A drag on a joint turns the bone about itself"), "model-twist");
     IconButton* reset = textButton(tr("Reset"), tr("Stand straight again"), "model-reset");
     m_hard = textButton(tr("Hard light"), tr("Two tones: where the light falls and where it does not"), "model-hard");
@@ -193,10 +205,8 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
         m_tools->noteColorUsed();
     });
     connect(m_view, &ModelView::edited, this, &ModelPanel::keep);
-    connect(figure, &QAbstractButton::clicked, this, [this] {
-        showFigure();
-        keep();
-    });
+    connect(m_figuresBtn, &QAbstractButton::clicked, this, [this] { showFigures(!m_figureRow->isVisible()); });
+    connect(m_keepBtn, &QAbstractButton::clicked, this, &ModelPanel::keepAsFigure);
     connect(open, &QAbstractButton::clicked, this, [this] {
         QSettings st;
         const QString dir = st.value(QStringLiteral("model/folder"), QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).toString();
@@ -258,13 +268,20 @@ void ModelPanel::bindSavedRig()
     Model3D* m = m_view->model();
     if (!m || !m->canRig() || m->path.isEmpty())
         return;
+    // Joints the artist set for this file come first; a figure brings its own.
     const QVariantList saved = QSettings().value(QStringLiteral("model/rigs")).toMap().value(m->path).toList();
-    if (saved.size() != Model3D::rigJointNames().size() * 3)
-        return;
     std::vector<QVector3D> joints;
-    for (int i = 0; i + 2 < saved.size(); i += 3)
-        joints.emplace_back(saved[i].toFloat(), saved[i + 1].toFloat(), saved[i + 2].toFloat());
-    if (m->bindRig(joints))
+    QString name;
+    if (saved.size() == Model3D::rigJointNames().size() * 3) {
+        for (int i = 0; i + 2 < saved.size(); i += 3)
+            joints.emplace_back(saved[i].toFloat(), saved[i + 1].toFloat(), saved[i + 2].toFloat());
+    }
+    const bool figure = figures::rigFor(m->path, joints.empty() ? &joints : nullptr, &name);
+    if (figure && !name.isEmpty()) {
+        m->name = name;
+        m_title->setText(name);
+    }
+    if (!joints.empty() && m->bindRig(joints))
         m_view->modelEdited();
 }
 
@@ -333,6 +350,66 @@ bool ModelPanel::finishRig(bool bind)
     return bound;
 }
 
+void ModelPanel::showFigures(bool shown)
+{
+    // Built again each time: a figure kept since then is on it too.
+    auto* grid = static_cast<QGridLayout*>(m_figureRow->layout());
+    while (QLayoutItem* item = grid->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    m_figureRow->setVisible(shown);
+    m_figuresBtn->setActive(shown);
+    if (!shown)
+        return;
+    QVector<figures::Figure> all = figures::list();
+    all.prepend({tr("Mannequin"), QString(), true});
+    for (int i = 0; i < all.size(); ++i) {
+        const figures::Figure f = all[i];
+        auto* b = new IconButton(QString(), m_figureRow);
+        b->setText(f.name);
+        b->setObjectName(QStringLiteral("model-figure"));
+        b->setProperty("figure", f.name);
+        b->setToolTip(f.path.isEmpty() ? tr("The jointed mannequin") : f.builtIn ? tr("Comes with Impasto") : tr("One of your own"));
+        Model3D* m = m_view->model();
+        b->setActive(m && (f.path.isEmpty() ? m->figure : m->path == f.path));
+        grid->addWidget(b, i / 4, i % 4);
+        connect(b, &QAbstractButton::clicked, this, [this, f] {
+            if (f.path.isEmpty())
+                showFigure();
+            else
+                openModel(f.path);
+            showFigures(true);
+            keep();
+        });
+    }
+}
+
+bool ModelPanel::keepAsFigure()
+{
+    Model3D* m = m_view->model();
+    if (!m || m->rig.empty() || figures::isFigure(m->path))
+        return false;
+    QString error;
+    const QString path = figures::keep(*m, m->name, &error);
+    if (path.isEmpty()) {
+        emit message(error);
+        return false;
+    }
+    // From now on it is that figure: what it is called, and where it is kept.
+    const QVariantList pose = m->poseState();
+    openModel(path);
+    if (Model3D* kept = m_view->model()) {
+        kept->setPoseState(pose);
+        m_view->modelEdited();
+    }
+    if (m_figureRow->isVisible())
+        showFigures(true);
+    keep();
+    emit message(tr("Kept among the figures as “%1”").arg(m_view->model() ? m_view->model()->name : QString()));
+    return true;
+}
+
 void ModelPanel::showFigure()
 {
     if (m_view->rigging())
@@ -365,6 +442,7 @@ void ModelPanel::sync()
     m_modes->setEnabled(!rigging);
     m_rigMirror->setActive(m_view->rigMirror());
     const bool riggedHere = m && !m->figure && !m->rig.empty();
+    m_keepBtn->setVisible(riggedHere && !figures::isFigure(m->path) && !rigging);
     m_rigBtn->setVisible(m && !m->figure && (m->canRig() || riggedHere));
     m_rigBtn->setText(riggedHere ? tr("Re-rig") : tr("Rig"));
     m_twist->setActive(m_view->twist());

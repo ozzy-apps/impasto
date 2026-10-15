@@ -21,3 +21,4 @@ int runDeviceReport();
 // of the interface (prefix-main.png, prefix-brushes.png, ...).
 int runUiShot(const QString& outPrefix);
 int runRigCheck(const QString& modelPath, const QString& outPrefix);
+int runMakeFigure(const QString& modelPath, const QString& outGlb, const QString& name, const QString& settingsFile);

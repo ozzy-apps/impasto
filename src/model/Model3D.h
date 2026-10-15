@@ -124,6 +124,11 @@ public:
     bool bindRig(const std::vector<QVector3D>& joints);
     bool facesAway(const std::vector<QVector3D>& joints) const;   // its front towards -Z
 
+    // Written out as a GLB of plain meshes, as it stands at rest (a rigged one
+    // as it was bound), without joints. Where no picture is on it, points that
+    // coincide are welded and the normals left for loading to work out again.
+    bool saveGlb(const QString& path, QString* error) const;
+
 private:
     float m_floor = 0.0f;
     float m_poseScale = 1.0f;   // its size against the figure's, for the poses that lower the hips

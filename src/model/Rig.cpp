@@ -2,7 +2,13 @@
 // into it, and its surface bound to the bones.
 #include "model/Model3D.h"
 
+#include <QBuffer>
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QObject>
+#include <QSaveFile>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -592,3 +598,151 @@ bool Model3D::bindRig(const std::vector<QVector3D>& J)
     m_floor = lo.y();
     return true;
 }
+
+// ------------------------------------------------------------------ GLB out
+
+bool Model3D::saveGlb(const QString& path, QString* error) const
+{
+    QByteArray bin;
+    QJsonArray views, accessors, primitives, materials, textures, images;
+    auto view = [&](const QByteArray& data, int target) {
+        while (bin.size() % 4)
+            bin.append('\0');
+        QJsonObject v{{"buffer", 0}, {"byteOffset", int(bin.size())}, {"byteLength", int(data.size())}};
+        if (target)
+            v["target"] = target;
+        bin.append(data);
+        views.append(v);
+        return int(views.size()) - 1;
+    };
+    auto accessor = [&](int v, int componentType, int count, const char* type) {
+        accessors.append(QJsonObject{{"bufferView", v}, {"componentType", componentType}, {"count", count}, {"type", type}});
+        return int(accessors.size()) - 1;
+    };
+    auto floats = [](const float* data, size_t n) { return QByteArray(reinterpret_cast<const char*>(data), qsizetype(n * sizeof(float))); };
+    auto linear = [](double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+    const std::vector<QMatrix4x4> world = worldTransforms();
+    for (const ModelInstance& inst : instances) {
+        if (inst.mesh < 0 || inst.mesh >= int(meshes.size()))
+            continue;
+        const ModelMesh& mesh = meshes[size_t(inst.mesh)];
+        // Where it stands at rest: a skinned mesh's points already are; a fixed one's hang from its node.
+        const bool fixed = inst.skin < 0 && inst.node >= 0 && inst.node < int(world.size());
+        std::vector<QVector3D> pos(mesh.positions), nrm(mesh.normals);
+        if (fixed) {
+            for (QVector3D& p : pos)
+                p = world[size_t(inst.node)].map(p);
+            for (QVector3D& n : nrm)
+                n = world[size_t(inst.node)].mapVector(n).normalized();
+        }
+        std::vector<quint32> idx(mesh.indices);
+        const bool pictured = !mesh.texture.isNull() && mesh.uvs.size() == mesh.positions.size();
+        if (!pictured) {
+            // One point where several coincide; the normals are worked out again on loading.
+            QHash<QByteArray, quint32> seen;
+            std::vector<QVector3D> welded;
+            std::vector<quint32> remap(pos.size());
+            for (size_t i = 0; i < pos.size(); ++i) {
+                const float key[3] = {pos[i].x(), pos[i].y(), pos[i].z()};
+                const QByteArray k(reinterpret_cast<const char*>(key), sizeof(key));
+                auto it = seen.constFind(k);
+                if (it == seen.constEnd()) {
+                    it = seen.insert(k, quint32(welded.size()));
+                    welded.push_back(pos[i]);
+                }
+                remap[i] = *it;
+            }
+            for (quint32& i : idx)
+                i = remap[i];
+            pos = std::move(welded);
+            nrm.clear();
+        }
+        std::vector<float> flat;
+        QVector3D lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+        for (const QVector3D& p : pos) {
+            flat.insert(flat.end(), {p.x(), p.y(), p.z()});
+            lo = QVector3D(std::min(lo.x(), p.x()), std::min(lo.y(), p.y()), std::min(lo.z(), p.z()));
+            hi = QVector3D(std::max(hi.x(), p.x()), std::max(hi.y(), p.y()), std::max(hi.z(), p.z()));
+        }
+        QJsonObject attributes;
+        const int position = accessor(view(floats(flat.data(), flat.size()), 34962), 5126, int(pos.size()), "VEC3");
+        QJsonObject a = accessors[position].toObject();
+        a["min"] = QJsonArray{lo.x(), lo.y(), lo.z()};
+        a["max"] = QJsonArray{hi.x(), hi.y(), hi.z()};
+        accessors[position] = a;
+        attributes["POSITION"] = position;
+        if (!nrm.empty()) {
+            flat.clear();
+            for (const QVector3D& n : nrm)
+                flat.insert(flat.end(), {n.x(), n.y(), n.z()});
+            attributes["NORMAL"] = accessor(view(floats(flat.data(), flat.size()), 34962), 5126, int(nrm.size()), "VEC3");
+        }
+        if (pictured) {
+            flat.clear();
+            for (const QVector2D& uv : mesh.uvs)
+                flat.insert(flat.end(), {uv.x(), uv.y()});
+            attributes["TEXCOORD_0"] = accessor(view(floats(flat.data(), flat.size()), 34962), 5126, int(mesh.uvs.size()), "VEC2");
+        }
+        const int indices = accessor(view(QByteArray(reinterpret_cast<const char*>(idx.data()), qsizetype(idx.size() * 4)), 34963), 5125, int(idx.size()), "SCALAR");
+        QJsonObject pbr{{"baseColorFactor", QJsonArray{linear(mesh.color.redF()), linear(mesh.color.greenF()), linear(mesh.color.blueF()), 1.0}},
+                        {"metallicFactor", 0.0}, {"roughnessFactor", 1.0}};
+        if (pictured) {
+            QByteArray png;
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            mesh.texture.save(&buffer, "PNG");
+            images.append(QJsonObject{{"bufferView", view(png, 0)}, {"mimeType", "image/png"}});
+            textures.append(QJsonObject{{"source", int(images.size()) - 1}});
+            pbr["baseColorTexture"] = QJsonObject{{"index", int(textures.size()) - 1}};
+        }
+        materials.append(QJsonObject{{"pbrMetallicRoughness", pbr}});
+        primitives.append(QJsonObject{{"attributes", attributes}, {"indices", indices}, {"material", int(materials.size()) - 1}});
+    }
+    if (primitives.isEmpty()) {
+        if (error)
+            *error = QObject::tr("There is nothing to write");
+        return false;
+    }
+    while (bin.size() % 4)
+        bin.append('\0');
+    QJsonObject json{{"asset", QJsonObject{{"version", "2.0"}, {"generator", "Impasto"}}},
+                     {"scene", 0},
+                     {"scenes", QJsonArray{QJsonObject{{"nodes", QJsonArray{0}}}}},
+                     {"nodes", QJsonArray{QJsonObject{{"name", name}, {"mesh", 0}}}},
+                     {"meshes", QJsonArray{QJsonObject{{"primitives", primitives}}}},
+                     {"materials", materials},
+                     {"accessors", accessors},
+                     {"bufferViews", views},
+                     {"buffers", QJsonArray{QJsonObject{{"byteLength", int(bin.size())}}}}};
+    if (!images.isEmpty()) {
+        json["images"] = images;
+        json["textures"] = textures;
+    }
+    QByteArray text = QJsonDocument(json).toJson(QJsonDocument::Compact);
+    while (text.size() % 4)
+        text.append(' ');
+    QByteArray glb("glTF");
+    auto u32 = [&](quint32 v) { glb.append(reinterpret_cast<const char*>(&v), 4); };
+    u32(2);
+    u32(quint32(12 + 8 + text.size() + 8 + bin.size()));
+    u32(quint32(text.size()));
+    u32(0x4E4F534A);
+    glb.append(text);
+    u32(quint32(bin.size()));
+    u32(0x004E4942);
+    glb.append(bin);
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error)
+            *error = file.errorString();
+        return false;
+    }
+    file.write(glb);
+    if (!file.commit()) {
+        if (error)
+            *error = file.errorString();
+        return false;
+    }
+    return true;
+}
+
