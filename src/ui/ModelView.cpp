@@ -265,6 +265,33 @@ QPointF ModelView::project(const QVector3D& world) const
     return {f.left() + (x * 0.5 + 0.5) * f.width(), f.top() + (0.5 - y * 0.5) * f.height()};
 }
 
+void ModelView::beginRig(const std::vector<QVector3D>& joints, bool facesAway)
+{
+    m_rigging = true;
+    m_rig = joints;
+    m_rigJoint = -1;
+    m_selected = -1;
+    // Face to face with it, to see where its joints should go.
+    m_yaw = facesAway ? 180.0 : 0.0;
+    m_pitch = 4.0;
+    fit();
+}
+
+void ModelView::endRig()
+{
+    m_rigging = false;
+    m_rigJoint = -1;
+    update();
+}
+
+QVector<QPointF> ModelView::rigPositions() const
+{
+    QVector<QPointF> out;
+    for (const QVector3D& j : m_rig)
+        out.push_back(project(j));
+    return out;
+}
+
 QVector<QPointF> ModelView::handlePositions() const
 {
     QVector<QPointF> out;
@@ -432,7 +459,22 @@ void ModelView::paintGL()
         p.setBrush(Qt::NoBrush);
         p.drawRect(f.adjusted(0.5, 0.5, -0.5, -0.5));
     }
-    if (m_mode == Mode::Pose && m_model) {
+    if (m_rigging) {
+        // The skeleton being fitted: bones as lines, joints as dots, the left side blue and the right orange.
+        const QVector<QPointF> at = rigPositions();
+        p.setPen(QPen(QColor(255, 255, 255, 170), 2.0));
+        for (const auto& [a, b] : Model3D::rigBones()) {
+            if (a < at.size() && b < at.size())
+                p.drawLine(at[a], at[b]);
+        }
+        for (int i = 0; i < at.size(); ++i) {
+            const int twin = Model3D::rigMirror(i);
+            const QColor side = twin == i ? QColor(255, 255, 255) : (i < twin ? QColor(90, 200, 250) : QColor(255, 159, 10));
+            p.setPen(QPen(i == m_rigJoint ? QColor(Qt::white) : QColor(0, 0, 0, 140), 1.5));
+            p.setBrush(i == m_rigJoint ? theme::accent : side);
+            p.drawEllipse(at[i], 6.0, 6.0);
+        }
+    } else if (m_mode == Mode::Pose && m_model) {
         const QVector<QPointF> at = handlePositions();
         for (int i = 0; i < at.size(); ++i) {
             const bool moves = m_model->handles[size_t(i)].moves;
@@ -525,6 +567,22 @@ void ModelView::mousePressEvent(QMouseEvent* e)
         setPicking(false);
         return;
     }
+    m_rigJoint = -1;
+    if (m_rigging && !m_panning) {
+        // The nearest joint under the pen, if one is.
+        const QVector<QPointF> at = rigPositions();
+        double best = 16.0;
+        for (int i = 0; i < at.size(); ++i) {
+            const double d = QLineF(at[i], e->position()).length();
+            if (d < best) {
+                best = d;
+                m_rigJoint = i;
+            }
+        }
+        m_handle = -1;
+        update();
+        return;
+    }
     m_handle = (m_mode == Mode::Pose && !m_panning) ? handleAt(e->position()) : -1;
     if (m_handle >= 0) {
         m_selected = m_handle;
@@ -538,7 +596,22 @@ void ModelView::mouseMoveEvent(QMouseEvent* e)
         return;
     const QPointF pos = e->position();
     const QPointF d = pos - m_last;
-    if (m_handle >= 0 && m_model) {
+    if (m_rigJoint >= 0) {
+        // In the plane facing the view, and the same joint on the other side mirrored with it.
+        const QVector3D at = m_rig[size_t(m_rigJoint)];
+        const QVector3D forward = (m_target - eye()).normalized();
+        const double depth = std::max(0.001, double(QVector3D::dotProduct(at - eye(), forward)));
+        const double perPixel = 2.0 * depth * std::tan(fovY() / 2.0) / std::max(1.0, frameRect().height());
+        const QMatrix4x4 v = viewMatrix().inverted();
+        const QVector3D move = (v.mapVector(QVector3D(1, 0, 0)) * float(d.x()) - v.mapVector(QVector3D(0, 1, 0)) * float(d.y())) * float(perPixel);
+        m_rig[size_t(m_rigJoint)] += move;
+        const int twin = Model3D::rigMirror(m_rigJoint);
+        if (m_rigMirror && twin != m_rigJoint) {
+            const float middle = m_rig[0].x();
+            const QVector3D& p = m_rig[size_t(m_rigJoint)];
+            m_rig[size_t(twin)] = QVector3D(2.0f * middle - p.x(), p.y(), p.z());
+        }
+    } else if (m_handle >= 0 && m_model) {
         dragHandle(m_last, pos);
         m_dirty = true;
     } else if (m_panning) {
@@ -558,9 +631,10 @@ void ModelView::mouseMoveEvent(QMouseEvent* e)
 
 void ModelView::mouseReleaseEvent(QMouseEvent*)
 {
-    if (m_handle >= 0 || m_panning || m_mode != Mode::Pose)
+    if ((m_handle >= 0 || m_panning || m_mode != Mode::Pose) && !m_rigging)
         emit edited();
     m_handle = -1;
+    m_rigJoint = -1;
     m_panning = false;
     update();
 }

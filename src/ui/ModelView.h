@@ -45,6 +45,15 @@ public:
     void setFrameAspect(double aspect);
     void fit();
 
+    // Rigging: the joints of a person shown over the model, to be dragged into place.
+    void beginRig(const std::vector<QVector3D>& joints, bool facesAway);
+    void endRig();
+    bool rigging() const { return m_rigging; }
+    const std::vector<QVector3D>& rigJoints() const { return m_rig; }
+    void setRigMirror(bool mirror) { m_rigMirror = mirror; }
+    bool rigMirror() const { return m_rigMirror; }
+    QVector<QPointF> rigPositions() const;
+
     // The camera and light, to keep between sessions.
     QVariantMap viewState() const;
     void setViewState(const QVariantMap& state);
@@ -111,4 +120,7 @@ private:
     int m_handle = -1;      // being dragged
     int m_selected = -1;    // shown as chosen
     bool m_panning = false;
+    bool m_rigging = false, m_rigMirror = true;
+    std::vector<QVector3D> m_rig;
+    int m_rigJoint = -1;   // being dragged
 };

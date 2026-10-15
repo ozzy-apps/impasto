@@ -280,7 +280,13 @@ that script for what it needs).
   crouch, T-pose); in *Pose*, drag any joint and the limb above it follows,
   *Twist* turns a bone about itself, and the hips move the whole figure. Open
   a model of your own (glTF and GLB, rigged ones posable by their joints
-  too, OBJ, STL). *Turn* goes round it, *Light* moves the light, *Hard light*
+  too, OBJ, STL). A person that came without joints, as models from AI
+  generators and scans usually do, can be rigged in Impasto: *Rig* fits the
+  figure's skeleton into it from its shape (standing, arms out or down),
+  shows the joints to be checked from the front and the side (a joint moved
+  moves its twin on the other side), and *Bind* ties the surface to the
+  bones, blended where they meet. It then poses like the figure, named poses
+  included, and opens rigged the next time. *Turn* goes round it, *Light* moves the light, *Hard light*
   shows it in two tones (the light and shadow shapes), and the lens goes from
   14 mm (strong perspective) to 200 mm (flat). A dashed frame shows what will
   land on the canvas: *Place* puts the model there as a layer of its own to
@@ -550,6 +556,7 @@ IMPASTO_ONLY=animation ./build/impasto --selftest out.png   # one group of check
 ./build/impasto --interchange-sample dir # a test document written as .ora and 8- and 16-bit .psd, with its picture
 ./build/impasto --interchange-open file.psd out.png   # open a PSD or .ora as Impasto would; print its layers
 tools/krita-headless.sh dir --export --export-filename dir/out.png dir/in.psd   # Krita's reading of a file, without touching your Krita
+./build/impasto --rig-check model.obj out   # rig a model as Rig would; renders it fitted and in a few poses
 ./build/impasto --devices               # pointing devices Qt sees, with pressure/tilt
 ```
 

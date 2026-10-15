@@ -65,6 +65,10 @@ public:
     QString name;
     QString path;          // empty for the figure
     bool figure = false;
+    // Jointed like a person, with the figure's joint names: the figure itself,
+    // or a model rigged in Impasto. The figure's poses work on it.
+    bool humanoid = false;
+    std::vector<QVector3D> rig;   // the joints it was rigged with, where it stood (see rigJointNames)
     std::vector<ModelNode> nodes;
     std::vector<ModelMesh> meshes;
     std::vector<ModelSkin> skins;
@@ -105,6 +109,22 @@ public:
 
     void finish();   // after loading: normals, the handles, the floor
 
+    // ---- rigging a model that came without joints
+    // A person's joints, as points in the model where it stands as loaded:
+    // the figure's 17 and the ends of the head, hands and feet.
+    static QStringList rigJointNames();
+    static int rigMirror(int joint);   // the same joint on the other side, or itself
+    static std::vector<std::pair<int, int>> rigBones();   // pairs of joints, to draw the skeleton by
+    bool canRig() const { return skins.empty() && !figure && !instances.empty(); }
+    // A first guess from the shape: a person standing upright, arms out or
+    // down at the sides. False, with the reason, when it does not look like one.
+    bool fitRig(std::vector<QVector3D>* joints, QString* why) const;
+    // Gives it those joints and binds every point of its surface to the bones
+    // nearest it, blended where two meet. It keeps the pose it was in.
+    bool bindRig(const std::vector<QVector3D>& joints);
+    bool facesAway(const std::vector<QVector3D>& joints) const;   // its front towards -Z
+
 private:
     float m_floor = 0.0f;
+    float m_poseScale = 1.0f;   // its size against the figure's, for the poses that lower the hips
 };

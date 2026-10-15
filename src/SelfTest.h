@@ -20,3 +20,4 @@ int runDeviceReport();
 // Opens the real window offscreen-style, paints a little and grabs screenshots
 // of the interface (prefix-main.png, prefix-brushes.png, ...).
 int runUiShot(const QString& outPrefix);
+int runRigCheck(const QString& modelPath, const QString& outPrefix);

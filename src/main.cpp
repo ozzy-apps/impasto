@@ -75,6 +75,8 @@ int main(int argc, char** argv)
         return runInterchangeSample(args[2]);
     if (args.size() >= 4 && args[1] == QLatin1String("--interchange-open"))
         return runInterchangeOpen(args[2], args[3]);
+    if (args.size() >= 4 && args[1] == QLatin1String("--rig-check"))
+        return runRigCheck(args[2], args[3]);
     if (args.size() >= 2 && args[1] == QLatin1String("--devices"))
         return runDeviceReport();
     if (args.size() >= 2 && args[1] == QLatin1String("--bench")) {

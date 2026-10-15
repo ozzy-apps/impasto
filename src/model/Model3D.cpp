@@ -513,6 +513,12 @@ void addLimb(ModelMesh& m, const QVector3D& a, const QVector3D& b, float ra, flo
         const double t = M_PI / 2.0 * (1.0 - double(i) / rings);
         profile.emplace_back(float(-ra * std::sin(t)), float(ra * std::cos(t)));
     }
+    // Rings along the length too, so that it bends smoothly and has points all the way down.
+    const int along = std::max(1, int(std::ceil(len / 0.03f)));
+    for (int i = 1; i < along; ++i) {
+        const float t = float(i) / float(along);
+        profile.emplace_back(len * t, ra + (rb - ra) * t);
+    }
     for (int i = 1; i <= rings; ++i) {
         const double t = M_PI / 2.0 * double(i) / rings;
         profile.emplace_back(float(len + rb * std::sin(t)), float(rb * std::cos(t)));
@@ -809,6 +815,7 @@ Model3D Model3D::makeFigure()
     Model3D m;
     m.name = QObject::tr("Figure");
     m.figure = true;
+    m.humanoid = true;
     struct Bone {
         const char* name;
         int parent;
@@ -950,6 +957,10 @@ void Model3D::applyFigurePose(const QString& pose)
         if (n >= 0)
             nodes[size_t(n)].pose = QQuaternion::fromEulerAngles(t.x, t.y, t.z);
     }
-    if (drop != 0.0f)
-        nodes[0].offset = QVector3D(0.0f, drop, 0.0f);
+    if (drop != 0.0f && !nodes.empty()) {
+        // The figure's hips: on a rigged model the root may be turned to face the other way.
+        int hips = figureNode(*this, "hips");
+        if (hips >= 0)
+            nodes[size_t(hips)].offset = QVector3D(0.0f, drop * m_poseScale, 0.0f);
+    }
 }

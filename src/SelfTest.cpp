@@ -3502,6 +3502,114 @@ static void buildInterchangeSample(CanvasEngine& engine, bool allModes)
     }
 }
 
+// A person with no skeleton, for rigging: the figure with its arms out in an
+// A-pose, flattened into a plain OBJ. Its true joints are returned too, in
+// the order Model3D::rigJointNames() gives, to measure a fit by.
+static std::vector<QVector3D> writeFigureObj(const QString& path, bool facingAway)
+{
+    Model3D figure = Model3D::makeFigure();
+    auto node = [&](const char* name) {
+        for (size_t i = 0; i < figure.nodes.size(); ++i)
+            if (figure.nodes[i].name == QLatin1String(name))
+                return int(i);
+        return -1;
+    };
+    figure.nodes[size_t(node("upperarm.L"))].pose = QQuaternion::fromAxisAndAngle(0, 0, 1, 36);
+    figure.nodes[size_t(node("upperarm.R"))].pose = QQuaternion::fromAxisAndAngle(0, 0, 1, -36);
+    const QQuaternion turn = facingAway ? QQuaternion::fromAxisAndAngle(0, 1, 0, 180) : QQuaternion();
+    QByteArray obj("# the figure, unrigged\n");
+    quint32 base = 1;
+    for (const Model3D::Part& part : figure.posed()) {
+        for (const QVector3D& v : part.positions) {
+            const QVector3D p = turn.rotatedVector(v);
+            obj += QByteArray("v ") + QByteArray::number(p.x(), 'f', 5) + ' ' + QByteArray::number(p.y(), 'f', 5) + ' ' + QByteArray::number(p.z(), 'f', 5) + '\n';
+        }
+        for (size_t i = 0; i + 2 < part.indices->size(); i += 3)
+            obj += "f " + QByteArray::number(base + (*part.indices)[i]) + ' ' + QByteArray::number(base + (*part.indices)[i + 1]) + ' '
+                   + QByteArray::number(base + (*part.indices)[i + 2]) + '\n';
+        base += quint32(part.positions.size());
+    }
+    QFile f(path);
+    f.open(QIODevice::WriteOnly);
+    f.write(obj);
+    const auto world = figure.worldTransforms();
+    auto at = [&](const char* name, const QVector3D& tip = QVector3D()) { return turn.rotatedVector(world[size_t(node(name))].map(tip)); };
+    // The figure's left is +X facing +Z; turned round it is -X, and the joints go with it.
+    return {at("hips"), at("spine"), at("chest"), at("neck"), at("head"), at("head", {0, 0.24f, 0}),
+            at("upperarm.L"), at("forearm.L"), at("hand.L"), at("hand.L", {0, -0.17f, 0}),
+            at("upperarm.R"), at("forearm.R"), at("hand.R"), at("hand.R", {0, -0.17f, 0}),
+            at("thigh.L"), at("shin.L"), at("foot.L"), at("foot.L", {0, -0.05f, 0.17f}),
+            at("thigh.R"), at("shin.R"), at("foot.R"), at("foot.R", {0, -0.05f, 0.17f})};
+}
+
+// A model rigged as the Rig button would, drawn as fitted (with its
+// skeleton) and in a few of the figure's poses: for looking at by eye.
+int runRigCheck(const QString& path, const QString& outPrefix)
+{
+    QString error;
+    auto model = std::make_unique<Model3D>();
+    if (!Model3D::load(path, model.get(), &error)) {
+        qCritical().noquote() << error;
+        return 1;
+    }
+    std::vector<QVector3D> joints;
+    if (!model->fitRig(&joints, &error)) {
+        qCritical().noquote() << "no fit:" << error;
+        return 1;
+    }
+    const QStringList names = Model3D::rigJointNames();
+    for (size_t i = 0; i < joints.size(); ++i)
+        qInfo().noquote() << QStringLiteral("%1: %2, %3, %4").arg(names[int(i)], -18).arg(joints[i].x(), 0, 'f', 3).arg(joints[i].y(), 0, 'f', 3).arg(joints[i].z(), 0, 'f', 3);
+    const bool away = model->facesAway(joints);
+    qInfo().noquote() << "faces" << (away ? "-Z" : "+Z");
+    ModelView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen);
+    view.resize(600, 800);
+    view.show();
+    QApplication::processEvents();
+    view.setModel(std::move(model));
+    view.beginRig(joints, away);
+    view.setFloor(false);
+    auto shot = [&](const QString& name, bool skeleton) {
+        QImage img = view.renderImage(QSize(600, 800), false);
+        if (skeleton) {
+            QPainter p(&img);
+            p.setRenderHint(QPainter::Antialiasing);
+            const QVector<QPointF> at = view.rigPositions();
+            p.setPen(QPen(Qt::white, 2));
+            for (const auto& [a, b] : Model3D::rigBones())
+                p.drawLine(at[a], at[b]);
+            p.setBrush(QColor(255, 159, 10));
+            for (const QPointF& pt : at)
+                p.drawEllipse(pt, 5, 5);
+        }
+        img.save(outPrefix + QStringLiteral("-") + name + QStringLiteral(".png"));
+    };
+    shot(QStringLiteral("fit"), true);
+    view.endRig();
+    QElapsedTimer t;
+    t.start();
+    const bool bound = view.model()->bindRig(joints);
+    qInfo().noquote() << "bound" << bound << "in" << t.elapsed() << "ms";
+    if (!bound)
+        return 1;
+    view.modelEdited();
+    shot(QStringLiteral("bound"), false);
+    for (const QString& pose : {QStringLiteral("Stand"), QStringLiteral("Walk"), QStringLiteral("Sit"), QStringLiteral("Reach")}) {
+        view.model()->applyFigurePose(pose);
+        view.modelEdited();
+        view.fit();
+        shot(pose.toLower(), false);
+    }
+    QVariantMap side = view.viewState();
+    side[QStringLiteral("yaw")] = side.value(QStringLiteral("yaw")).toDouble() + 90.0;
+    view.setViewState(side);
+    view.model()->applyFigurePose(QStringLiteral("Walk"));
+    view.modelEdited();
+    shot(QStringLiteral("walk-side"), false);
+    return 0;
+}
+
 // 3D reference: the files a model comes in, the figure, and posing it.
 static bool runModelTests(const QString& outPath)
 {
@@ -3669,6 +3777,55 @@ static bool runModelTests(const QString& outPath)
     check(QStringLiteral("3D: the figure stands %1 m tall on the floor with %2 handles; a joint turned carries the arm round it; the pose comes back as kept; T-pose holds the hand out at %3 m")
               .arg(hi.y(), 0, 'f', 2).arg(figure.handles.size()).arg(handT.x(), 0, 'f', 2),
           standing && figure.handles.size() == 17 && carried && reset && restored && handT.x() > 0.7f && std::abs(handT.y() - 1.42f) < 0.12f && sat);
+
+    // Rigging a person that came without joints: the figure in an A-pose, flattened.
+    for (const bool away : {false, true}) {
+        const QString path = outPath + (away ? QStringLiteral(".person-away.obj") : QStringLiteral(".person.obj"));
+        const std::vector<QVector3D> truth = writeFigureObj(path, away);
+        Model3D person;
+        const bool loaded = Model3D::load(path, &person, &error) && person.canRig() && person.handles.empty();
+        std::vector<QVector3D> fit;
+        const bool fitted = loaded && person.fitRig(&fit, &error);
+        // How far each joint the drawing hangs on is from where it truly is.
+        float worst = 0.0f;
+        QString worstName;
+        const QStringList names = Model3D::rigJointNames();
+        for (int i : {0, 2, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20}) {
+            // A shoulder is guessed from the width of the chest, which is less sure than the rest.
+            const float allow = (i == 6 || i == 10) ? 0.10f / 0.07f : 1.0f;
+            const float d = fitted ? (fit[size_t(i)] - truth[size_t(i)]).length() / allow : 9.0f;
+            if (d > worst) {
+                worst = d;
+                worstName = names[i];
+            }
+        }
+        // Bound, it looks as it did; walking, its left foot goes forward, whichever way it faces.
+        bool unchanged = false, walks = false;
+        if (fitted) {
+            const auto before = person.posed();
+            const bool bound = person.bindRig(fit);
+            const auto after = person.posed();
+            float moved = 0.0f;
+            for (size_t k = 0; k < before.size() && k < after.size(); ++k)
+                for (size_t v = 0; v < before[k].positions.size(); ++v)
+                    moved = std::max(moved, (before[k].positions[v] - after[k].positions[v]).length());
+            unchanged = bound && person.humanoid && person.handles.size() == 17 && moved < 1e-3f && person.facesAway(fit) == away;
+            auto ankle = [&](const char* name) {
+                for (size_t i = 0; i < person.nodes.size(); ++i)
+                    if (person.nodes[i].name == QLatin1String(name))
+                        return person.jointPosition(int(i), person.worldTransforms());
+                return QVector3D();
+            };
+            person.applyFigurePose(QStringLiteral("Stand"));
+            const QVector3D standing = ankle("foot.L");
+            person.applyFigurePose(QStringLiteral("Walk"));
+            const float forward = (ankle("foot.L").z() - standing.z()) * (away ? -1.0f : 1.0f);
+            walks = forward > 0.08f;
+        }
+        check(QStringLiteral("rigging an OBJ person (A-pose, facing %1): the joints land within %2 m of the true ones (%3 the furthest; shoulders within 0.10); bound, it looks as it did; walking, its left foot goes forward")
+                  .arg(away ? QStringLiteral("away") : QStringLiteral("forward")).arg(worst, 0, 'f', 3).arg(worstName),
+              fitted && worst < 0.07f && unchanged && walks);
+    }
     return all;
 }
 
@@ -5152,6 +5309,46 @@ static bool runModelUi(MainWindow& window, CanvasEngine& engine, const std::func
         posesHidden = posesHidden && !b->isVisible();
     check(QStringLiteral("a model from a file takes the figure's place, without the figure's poses"),
           opened && view->model() && !view->model()->figure && view->model()->name == QLatin1String("Box") && posesHidden);
+    // A person without joints: Rig fits a skeleton, a joint moved moves its twin, Bind makes it posable.
+    {
+        const QString personPath = dir.filePath(QStringLiteral("Person.obj"));
+        writeFigureObj(personPath, false);
+        const bool openedPerson = panel->openModel(personPath);
+        settle();
+        auto* rigButton = window.findChild<IconButton*>(QStringLiteral("model-rig"));
+        const bool offered = openedPerson && rigButton && rigButton->isVisible() && view->model()->handles.empty();
+        if (rigButton)
+            penTap(rigButton, QPointF(rigButton->width() / 2.0, rigButton->height() / 2.0));
+        const bool rigging = view->rigging() && view->rigPositions().size() == Model3D::rigJointNames().size();
+        bool mirrored = false, bound = false, posable = false, remembered = false;
+        if (rigging) {
+            capture(QStringLiteral("model-rig"));
+            const QPointF elbow = view->rigPositions()[7];
+            const QVector3D before = view->rigJoints()[7];
+            drag(view, elbow, elbow + QPointF(0, -24));
+            const auto& j = view->rigJoints();
+            mirrored = (j[7] - before).length() > 0.01f && std::abs(j[11].x() - (2.0f * j[0].x() - j[7].x())) < 1e-4f && std::abs(j[11].y() - j[7].y()) < 1e-4f;
+            drag(view, view->rigPositions()[7], view->rigPositions()[7] + QPointF(0, 24));   // and back
+            auto* bind = window.findChild<QWidget*>(QStringLiteral("model-rig-bind"));
+            penTap(bind, QPointF(bind->width() / 2.0, bind->height() / 2.0));
+            bound = !view->rigging() && view->model()->humanoid && view->model()->handles.size() == 17 && view->mode() == ModelView::Mode::Pose;
+            if (bound) {
+                Model3D* m = view->model();
+                int handL = -1;
+                for (size_t i = 0; i < m->nodes.size(); ++i)
+                    if (m->nodes[i].name == QLatin1String("hand.L"))
+                        handL = int(i);
+                const QVector3D handBefore = m->jointPosition(handL, m->worldTransforms());
+                const QPointF at = view->handlePositions().value(5);
+                drag(view, at, at + QPointF(60, -40));
+                posable = (m->jointPosition(handL, m->worldTransforms()) - handBefore).length() > 0.1f;
+                capture(QStringLiteral("model-rigged"));
+            }
+            remembered = panel->openModel(personPath) && view->model()->humanoid && view->model()->handles.size() == 17;
+        }
+        check(QStringLiteral("a person without joints offers Rig; its skeleton shows to be checked, a joint moved moves its twin, Bind makes it posable, and it opens rigged again"),
+              offered && rigging && mirrored && bound && posable && remembered);
+    }
     panel->showFigure();
     pop->hidePanel();
     for (const QString& line : log)

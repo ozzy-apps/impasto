@@ -25,6 +25,10 @@ public:
     void showFigure();
     void setCanvasSize(const QSize& size);
     QImage placement() const;   // the view as a layer the size of the canvas
+    // Rigging a model that came without joints: the figure's skeleton fitted
+    // into it, to be checked and then bound.
+    bool startRig();
+    bool finishRig(bool bind);
 
 signals:
     void placeRequested(const QImage& image);
@@ -36,6 +40,7 @@ protected:
 private:
     void sync();
     void keep();   // into the settings, a moment after the last change
+    void bindSavedRig();   // a model rigged before comes back rigged
 
     ToolState* m_tools;
     ModelView* m_view;
@@ -43,6 +48,11 @@ private:
     SegmentBar* m_modes;
     QWidget* m_poses;
     IconButton* m_twist;
+    IconButton* m_rigBtn;
+    QWidget* m_tuneRow;
+    QWidget* m_rigRow;
+    IconButton* m_rigMirror;
+    std::vector<QVector3D> m_rigBefore;   // a re-rig cancelled goes back to these
     IconButton* m_hard;
     IconButton* m_floor;
     IconButton* m_pick;
