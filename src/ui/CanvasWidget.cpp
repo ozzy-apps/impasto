@@ -173,13 +173,14 @@ void CanvasWidget::fitToView()
         return;
     }
     // Leave room for the top bar and sidebar so the canvas isn't hidden under them.
-    const double availW = std::max(64.0, w - 150.0 * dpr), availH = std::max(64.0, h - 110.0 * dpr);
+    const double inset = m_bottomInset * dpr;
+    const double availW = std::max(64.0, w - 150.0 * dpr), availH = std::max(64.0, h - 110.0 * dpr - inset);
     m_zoom = std::clamp(std::min(availW / cs.width(), availH / cs.height()), kMinZoom, kMaxZoom);
     if (m_zoom > 1.0)
         m_zoom = 1.0;
     m_rotation = 0.0;
     m_flip = false;
-    m_pan = QPointF(w / 2.0, h / 2.0 + 20.0 * dpr);
+    m_pan = QPointF(w / 2.0, (h - inset) / 2.0 + 20.0 * dpr);
     m_fitPending = false;
     emit viewChanged();
     update();

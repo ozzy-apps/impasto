@@ -162,6 +162,19 @@ bool save(CanvasEngine& engine, const QString& path, QString* error)
     g[QStringLiteral("isoRight")] = double(guides.isoRight);
     g[QStringLiteral("snap")] = guides.snap;
     root[QStringLiteral("guides")] = g;
+    const Animation& anim = engine.animation();
+    if (!(anim == Animation())) {
+        QJsonObject a;
+        a[QStringLiteral("enabled")] = anim.enabled;
+        a[QStringLiteral("playback")] = int(anim.playback);
+        a[QStringLiteral("fps")] = anim.fps;
+        a[QStringLiteral("onionFrames")] = anim.onionFrames;
+        a[QStringLiteral("onionOpacity")] = double(anim.onionOpacity);
+        a[QStringLiteral("tintOnion")] = anim.tintOnion;
+        a[QStringLiteral("background")] = anim.background;
+        a[QStringLiteral("foreground")] = anim.foreground;
+        root[QStringLiteral("animation")] = a;
+    }
     int active = 0;
     QJsonArray arr;
     for (int i = 0; i < layers.size(); ++i) {
@@ -178,6 +191,8 @@ bool save(CanvasEngine& engine, const QString& path, QString* error)
         o[QStringLiteral("group")] = l.isGroup;
         o[QStringLiteral("parent")] = indexOfId.value(l.parent, -1);   // position in this list
         o[QStringLiteral("collapsed")] = l.collapsed;
+        if (l.hold != 1)
+            o[QStringLiteral("hold")] = l.hold;
         o[QStringLiteral("maskEnabled")] = l.maskEnabled;
         if (l.reference)
             o[QStringLiteral("reference")] = true;
@@ -309,6 +324,7 @@ bool load(CanvasEngine& engine, const QString& path, QString* error)
         d.info.blend = blendFromName(o[QStringLiteral("blend")].toString());
         d.info.alphaLock = o[QStringLiteral("alphaLock")].toBool();
         d.info.clipping = o[QStringLiteral("clipping")].toBool();
+        d.info.hold = std::max(1, o[QStringLiteral("hold")].toInt(1));
         const QJsonArray r = o[QStringLiteral("rect")].toArray();
         if (r.size() == 4)
             d.rect = QRect(r[0].toInt(), r[1].toInt(), r[2].toInt(), r[3].toInt());
@@ -387,6 +403,21 @@ bool load(CanvasEngine& engine, const QString& path, QString* error)
     guides.isoRight = float(g[QStringLiteral("isoRight")].toDouble(30.0));
     guides.snap = g[QStringLiteral("snap")].toBool(true);
     engine.setGuides(guides);
+    if (root.contains(QStringLiteral("animation"))) {
+        const QJsonObject a = root[QStringLiteral("animation")].toObject();
+        Animation anim;
+        anim.enabled = a[QStringLiteral("enabled")].toBool();
+        anim.playback = Animation::Playback(std::clamp(a[QStringLiteral("playback")].toInt(), 0, 2));
+        anim.fps = a[QStringLiteral("fps")].toInt(12);
+        anim.onionFrames = a[QStringLiteral("onionFrames")].toInt(2);
+        anim.onionOpacity = float(a[QStringLiteral("onionOpacity")].toDouble(0.5));
+        anim.tintOnion = a[QStringLiteral("tintOnion")].toBool(true);
+        anim.background = a[QStringLiteral("background")].toBool();
+        anim.foreground = a[QStringLiteral("foreground")].toBool();
+        const bool wasModified = engine.isModified();
+        engine.setAnimation(anim);
+        engine.setModified(wasModified);   // opening is not a change
+    }
     if (!selBounds.isEmpty()) {
         const QByteArray rows = qUncompress(selection);
         if (rows.size() == qsizetype(selBounds.width()) * selBounds.height()) {

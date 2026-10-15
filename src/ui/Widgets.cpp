@@ -475,7 +475,13 @@ void Popover::setContent(QWidget* content)
 
 QRect Popover::bodyRect() const
 {
-    return rect().adjusted(kShadow, kShadow + kArrow, -kShadow, -kShadow);
+    return m_upward ? rect().adjusted(kShadow, kShadow, -kShadow, -kShadow - kArrow) : rect().adjusted(kShadow, kShadow + kArrow, -kShadow, -kShadow);
+}
+
+void Popover::setOpensUpward(bool upward)
+{
+    m_upward = upward;
+    layout()->setContentsMargins(kShadow, kShadow + (upward ? 0 : kArrow) + kGrip, kShadow, kShadow + (upward ? kArrow : 0));
 }
 
 QRect Popover::gripRect() const
@@ -512,11 +518,11 @@ void Popover::reposition()
     }
     if (!m_anchor)
         return;
-    const QPoint a = m_anchor->mapTo(m_host, QPoint(m_anchor->width() / 2, m_anchor->height()));
+    const QPoint a = m_anchor->mapTo(m_host, QPoint(m_anchor->width() / 2, m_upward ? 0 : m_anchor->height()));
     const int w = width();
     const int x = std::clamp(a.x() - w / 2, 4 - kShadow, std::max(4 - kShadow, m_host->width() - w + kShadow - 4));
     m_arrowX = a.x() - x;
-    move(x, a.y() - kShadow + 2);
+    move(x, m_upward ? a.y() - height() + kShadow - 2 : a.y() - kShadow + 2);
     update();
 }
 
@@ -653,7 +659,7 @@ void Popover::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    const QRectF body = QRectF(rect()).adjusted(kShadow, kShadow + kArrow, -kShadow, -kShadow);
+    const QRectF body = QRectF(bodyRect());
     p.setPen(Qt::NoPen);
     for (int i = kShadow; i > 0; i -= 2) {
         p.setBrush(QColor(0, 0, 0, 5 + (kShadow - i)));
@@ -665,9 +671,11 @@ void Popover::paintEvent(QPaintEvent*)
         // Hanging from its button: an arrow says which one.
         const qreal ax = std::clamp(qreal(m_arrowX), body.left() + 22, body.right() - 22);
         QPainterPath arrow;
-        arrow.moveTo(ax - kArrow - 2, body.top() + 0.5);
-        arrow.lineTo(ax, body.top() - kArrow);
-        arrow.lineTo(ax + kArrow + 2, body.top() + 0.5);
+        const qreal edge = m_upward ? body.bottom() - 0.5 : body.top() + 0.5;
+        const qreal tip = m_upward ? body.bottom() + kArrow : body.top() - kArrow;
+        arrow.moveTo(ax - kArrow - 2, edge);
+        arrow.lineTo(ax, tip);
+        arrow.lineTo(ax + kArrow + 2, edge);
         arrow.closeSubpath();
         path = path.united(arrow);
     }

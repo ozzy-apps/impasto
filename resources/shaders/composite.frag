@@ -12,6 +12,7 @@ uniform int uBackdropIsColor;
 uniform int uHasClip;
 uniform float uOpacity;
 uniform int uMode;
+uniform vec4 uTint;   // an onion skin: the colour it is turned towards, and how far (a)
 // Where this fragment is in each texture. The canvas is put together a band
 // at a time, in buffers the size of a band: those and the layers, which are
 // the size of the canvas, do not share an origin.
@@ -37,6 +38,9 @@ void main()
             base *= texelFetch(uClipMask, p + uClipMaskAt, 0).r;
         S *= base;
     }
+
+    if (uTint.a > 0.0)
+        S.rgb = mix(S.rgb, uTint.rgb * S.a, uTint.a);
 
     if (uMode == 0 || S.a <= 0.0) {
         fragColor = S + B * (1.0 - S.a);

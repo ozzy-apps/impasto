@@ -178,6 +178,8 @@ public:
     QPoint pinnedPos() const { return m_pinnedPos; }
     void setPinnedPos(const QPoint& bodyTopLeft);
     void setTopInset(int px) { m_topInset = px; }   // a pinned panel stays below this (the top bar)
+    // Opens above its button rather than below: for buttons along the bottom of the window.
+    void setOpensUpward(bool upward);
     QRect gripRect() const;                          // in this widget's coordinates
     QRect pinRect() const;
 
@@ -203,6 +205,7 @@ private:
     bool m_pinned = false;
     QPoint m_pinnedPos;
     int m_topInset = 0;
+    bool m_upward = false;
     bool m_gripDown = false, m_gripMoved = false;
     QPointF m_gripStart;      // global
     QPoint m_bodyAtGrip;

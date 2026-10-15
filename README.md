@@ -5,12 +5,15 @@
 A painting app for pen tablets on the Linux desktop, in the spirit of Procreate:
 a full-window canvas, brushes that answer to pressure and tilt, and tools that
 stay out of the way until you want them. It paints on the graphics card at 16
-bits a channel, and opens and saves Photoshop and OpenRaster files.
+bits a channel, opens and saves Photoshop and OpenRaster files, animates frame
+by frame with onion skins, and keeps a posable 3D figure beside the canvas to
+draw from.
 
 | | |
 | --- | --- |
 | ![Radial symmetry as a kaleidoscope](docs/screenshot-kaleidoscope.png) | ![Colour harmonies](docs/screenshot-harmony.png) |
 | ![The Brush Lab](docs/screenshot-brush-lab-shape.png) | ![QuickShape, edited point by point](docs/screenshot-quickshape-points.png) |
+| ![Animation Assist with onion skins](docs/screenshot-animation-settings.png) | ![The 3D figure, posed by its joints](docs/screenshot-3d-pose.png) |
 
 ![Brushes from the library](docs/screenshot-new-brushes.png)
 
@@ -21,17 +24,17 @@ Impasto needs OpenGL 4.3, which any graphics card or integrated graphics from
 the last ten years offers.
 
 - **Ubuntu 24.04 and what is built on it** (Zorin OS 18, Linux Mint 22,
-  Pop!_OS 24.04): `impasto_0.9.0_amd64.deb`
+  Pop!_OS 24.04): the `.deb`
   ```bash
-  sudo apt install ./impasto_0.9.0_amd64.deb
+  sudo apt install ./impasto_*_amd64.deb
   ```
-- **Any distribution, through Flatpak**: `Impasto-0.9.0.flatpak`
+- **Any distribution, through Flatpak**: the `.flatpak`
   ```bash
-  flatpak install --user Impasto-0.9.0.flatpak
+  flatpak install --user Impasto-*.flatpak
   ```
-- **Any recent distribution, nothing to install**: `Impasto-0.9.0-x86_64.AppImage`
+- **Any recent distribution, nothing to install**: the `.AppImage`
   ```bash
-  chmod +x Impasto-0.9.0-x86_64.AppImage && ./Impasto-0.9.0-x86_64.AppImage
+  chmod +x Impasto-*-x86_64.AppImage && ./Impasto-*-x86_64.AppImage
   ```
 
 Artworks are kept in `~/Pictures/Impasto` unless you choose another folder in
@@ -259,6 +262,30 @@ that script for what it needs).
   or the colour. Moving, sizing and turning it keep it text, and sharp;
   painting on it, erasing or filtering it makes it ordinary pixels, and undo
   makes it text again.
+- **Animation Assist** (the wrench menu): every top-level layer or group is a
+  frame, as in Procreate. A timeline along the bottom shows them in a row: tap
+  one to work on it, tap it again for its options (hold it for longer,
+  duplicate, delete), rest on one and drag to move it, and *+* adds the next.
+  The frames either side show faded behind the one you are drawing, earlier
+  ones in red and later ones in green, as many as you like. *Settings* has
+  loop, ping-pong or one-shot playback at 1 to 60 frames a second, and can keep
+  the first frame as a background and the last as a foreground. *Export* writes
+  an animated GIF (one palette for every frame, so nothing flickers), an
+  animated PNG (every colour, see-through parts kept), an MP4 video (when
+  ffmpeg is installed) or a numbered PNG for every frame, at full size, half
+  or 1080 px. It is all kept in the document.
+- **3D reference** (`Shift+R`, the cube at the top): a figure to pose and draw
+  from, beside the canvas, in the manner of Clip Studio's 3D figures. The
+  built-in jointed figure comes with poses (stand, walk, run, sit, reach,
+  crouch, T-pose); in *Pose*, drag any joint and the limb above it follows,
+  *Twist* turns a bone about itself, and the hips move the whole figure. Open
+  a model of your own (glTF and GLB, rigged ones posable by their joints
+  too, OBJ, STL). *Turn* goes round it, *Light* moves the light, *Hard light*
+  shows it in two tones (the light and shadow shapes), and the lens goes from
+  14 mm (strong perspective) to 200 mm (flat). A dashed frame shows what will
+  land on the canvas: *Place* puts the model there as a layer of its own to
+  draw over, and the eyedropper picks colours from it. The model, its pose,
+  the view and the light are kept between sessions.
 - **Crash recovery**: unsaved work is copied aside every couple of minutes
   while the pen rests. If the app or the computer goes down, the next start
   offers it back.
@@ -305,6 +332,8 @@ that script for what it needs).
 | Rotate view | `Shift+Space` + drag, `4` / `6`, `5` resets |
 | Fit / 100% / mirror view | `Ctrl+0` / `Ctrl+1` / `M` |
 | Layers / Colours / Reference picture | `L` / `C` / `R` |
+| 3D reference | `Shift+R`, or the cube at the top |
+| Animation Assist | the wrench menu; the timeline's Play, Settings and Export |
 | Stabilisation of the brush in hand | `Y`, or the wavy-line button at the top left |
 | Swap the current and the previous colour | `X`, or tap the pair of chips at the top of Colours |
 | Keep a colour in the palette | tap an empty slot |
@@ -363,8 +392,9 @@ src/gfx      thin OpenGL helpers (textures, shader programs, fullscreen pass)
 src/brush    presets, procedural and imported tips and grains, stroke engine, dab renderer
 src/color    palettes (kept, read, written, taken from a picture) and colour harmonies
 src/shape    QuickShape: stroke recognition and shape geometry
+src/model    3D models: glTF/GLB, OBJ and STL, the jointed figure, posing
 src/engine   CanvasEngine: document, layers, compositing, undo, edits
-src/io       .imp load/save, image export, PSD/PSB and OpenRaster (with a small zip reader and writer)
+src/io       .imp load/save, image export, PSD/PSB and OpenRaster (with a small zip reader and writer), animated GIF and PNG
 src/ui       viewport, panels, gallery, main window
 resources    GLSL shaders and the app icon
 ```
@@ -516,6 +546,7 @@ The binary can exercise itself without a window on screen:
 ./build/impasto --bench                 # stroke, shape, fill and selection cost at 1440p, 4K and 8K
 ./build/impasto --bench 8000x8000       # the same for one size of your choosing
 IMPASTO_NO_SPARSE=1 ./build/impasto         # store every layer whole, as on a card without sparse textures
+IMPASTO_ONLY=animation ./build/impasto --selftest out.png   # one group of checks only: gaps, animation or model (also for --ui-shot)
 ./build/impasto --interchange-sample dir # a test document written as .ora and 8- and 16-bit .psd, with its picture
 ./build/impasto --interchange-open file.psd out.png   # open a PSD or .ora as Impasto would; print its layers
 tools/krita-headless.sh dir --export --export-filename dir/out.png dir/in.psd   # Krita's reading of a file, without touching your Krita
@@ -524,16 +555,6 @@ tools/krita-headless.sh dir --export --export-filename dir/out.png dir/in.psd   
 
 Both runs keep to throwaway folders of their own: they never read or write
 your settings, brushes or gallery.
-
-## Planned for later
-
-Not being worked on yet; the everyday tools come first.
-
-- **Animation**: frame-by-frame drawing with onion skinning and a timeline,
-  along the lines of Procreate's Animation Assist, with export as GIF or video.
-- **3D reference**: load a 3D model, turn it, pose it, and keep it beside the
-  canvas to draw from, in the manner of Clip Studio's 3D figures. The
-  reference picture panel is where it would live.
 
 ## Not there yet
 

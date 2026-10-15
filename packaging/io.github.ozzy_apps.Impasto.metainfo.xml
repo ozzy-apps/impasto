@@ -20,6 +20,8 @@
       <li>QuickShape: hold the pen at the end of a stroke for a clean line, curve or shape</li>
       <li>Symmetry, perspective guides, selections, fills, gradients, text and liquify</li>
       <li>Opens and saves Photoshop (PSD/PSB) and OpenRaster files</li>
+      <li>Frame-by-frame animation with onion skins, out as GIF, animated PNG or video</li>
+      <li>A posable 3D figure, or a model of your own, to draw from</li>
     </ul>
   </description>
   <launchable type="desktop-id">io.github.ozzy_apps.Impasto.desktop</launchable>
@@ -45,6 +47,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.10.0" date="2026-10-15">
+      <description>
+        <p>Animation Assist: frames, onion skins and a timeline, out as GIF, animated PNG or video. A 3D reference: a posable figure, or a model of your own, to draw from.</p>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-10-14">
       <description>
         <p>The first public release.</p>

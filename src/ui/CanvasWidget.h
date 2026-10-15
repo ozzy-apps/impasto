@@ -32,6 +32,8 @@ public:
     double zoom() const { return m_zoom; }
     double rotation() const { return m_rotation; }
     void fitToView();
+    // Room taken along the bottom (the animation timeline): fitting the canvas leaves it free.
+    void setBottomInset(int px) { m_bottomInset = std::max(0, px); }
     void zoomTo(double zoom);
     void zoomStep(int direction);
     void rotateStep(double degrees);
@@ -529,4 +531,5 @@ private:
         QPointF startMouse, startCenter;
         double startSx = 1.0, startSy = 1.0, startRot = 0.0;
     } m_tf;
+    int m_bottomInset = 0;
 };

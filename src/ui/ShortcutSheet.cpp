@@ -223,6 +223,7 @@ QVector<ShortcutSheet::Section> ShortcutSheet::sections()
         {tr("Panels and the pen"),
          {{tr("Reference picture"), QStringLiteral("R")},
           {tr("Stabilisation of the brush in hand"), QStringLiteral("Y")},
+          {tr("3D reference: a figure to pose, or a model"), QStringLiteral("Shift+R")},
           {tr("Keep a panel open"), tr("drag it away by its top edge, or press its pin")},
           {tr("Scroll a list with the pen"), tr("press and drag it · a flick glides on")}}},
     };

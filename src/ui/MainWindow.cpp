@@ -12,6 +12,8 @@
 #include "ui/NewCanvasDialog.h"
 #include "ui/ReferencePanel.h"
 #include "ui/StabilisePanel.h"
+#include "ui/Timeline.h"
+#include "ui/ModelPanel.h"
 #include "ui/ShortcutSheet.h"
 #include "ui/Theme.h"
 #include "ui/ToolState.h"
@@ -309,6 +311,9 @@ MainWindow::MainWindow(CanvasEngine* engine, QWidget* parent) : QMainWindow(pare
     buildTopBar();
     buildSideBar();
     buildPopovers();
+    m_timeline = new TimelineBar(m_engine, m_host);
+    m_timeline->hide();
+    connect(m_timeline, &TimelineBar::message, this, [this](const QString& text) { m_toast->showMessage(text); });
     m_toast = new Toast(m_host);
     m_shapePill = new Panel(m_host, 17);
     {
@@ -372,6 +377,8 @@ MainWindow::MainWindow(CanvasEngine* engine, QWidget* parent) : QMainWindow(pare
     connect(m_canvas, &CanvasWidget::toast, m_toast, &Toast::showMessage);
     connect(m_engine, &CanvasEngine::modifiedChanged, this, &MainWindow::updateTitle);
     connect(m_engine, &CanvasEngine::documentChanged, this, &MainWindow::updateTitle);
+    connect(m_engine, &CanvasEngine::documentChanged, this, &MainWindow::syncTimeline);
+    connect(m_engine, &CanvasEngine::animationChanged, this, &MainWindow::syncTimeline);
     connect(m_engine, &CanvasEngine::guidesChanged, this, [this] {
         const Guides& g = m_engine->guides();
         m_guidesBtn->setActive(m_guideBar || g.symmetry != Guides::Symmetry::Off || g.perspective != Guides::Perspective::Off);
@@ -506,6 +513,10 @@ void MainWindow::buildTopBar()
     m_refBtn->setToolTip(tr("Reference picture (R)"));
     m_refBtn->setObjectName(QStringLiteral("reference-button"));
     l->addWidget(m_refBtn);
+    m_modelBtn = new IconButton(QStringLiteral("cube"), m_topBar);
+    m_modelBtn->setToolTip(tr("3D reference: a figure to pose, or a model of your own (Shift+R)"));
+    m_modelBtn->setObjectName(QStringLiteral("model-button"));
+    l->addWidget(m_modelBtn);
     m_layersBtn = new IconButton(QStringLiteral("layers"), m_topBar);
     m_layersBtn->setToolTip(tr("Layers (L)"));
     m_layersBtn->setObjectName(QStringLiteral("layers-button"));
@@ -526,6 +537,7 @@ void MainWindow::buildTopBar()
     });
     connect(m_layersBtn, &QAbstractButton::clicked, this, [this] { togglePopover(m_layerPop, m_layersBtn); });
     connect(m_refBtn, &QAbstractButton::clicked, this, [this] { togglePopover(m_refPop, m_refBtn); });
+    connect(m_modelBtn, &QAbstractButton::clicked, this, [this] { togglePopover(m_modelPop, m_modelBtn); });
     connect(m_steadyBtn, &QAbstractButton::clicked, this, [this] { togglePopover(m_steadyPop, m_steadyBtn); });
     connect(m_colorBtn, &QAbstractButton::clicked, this, [this] { togglePopover(m_colorPop, m_colorBtn); });
 }
@@ -595,6 +607,18 @@ void MainWindow::buildPopovers()
     m_refPop = new Popover(m_host);
     m_refPanel = new ReferencePanel(m_tools);
     m_refPop->setContent(m_refPanel);
+    m_modelPop = new Popover(m_host);
+    m_modelPanel = new ModelPanel(m_tools);
+    m_modelPop->setContent(m_modelPanel);
+    m_modelPanel->setCanvasSize(m_engine->canvasSize());
+    connect(m_engine, &CanvasEngine::documentChanged, m_modelPanel, [this] { m_modelPanel->setCanvasSize(m_engine->canvasSize()); });
+    connect(m_modelPanel, &ModelPanel::message, this, [this](const QString& text) { m_toast->showMessage(text); });
+    connect(m_modelPanel, &ModelPanel::placeRequested, this, [this](const QImage& image) {
+        if (editing())
+            return;
+        if (m_engine->addImageLayer(image, tr("3D reference"), QPoint(0, 0), tr("Place 3D Reference")))
+            m_toast->showMessage(tr("Placed as a layer of its own: lower its opacity to draw over it"));
+    });
     m_steadyPop = new Popover(m_host);
     m_steadyPanel = new StabilisePanel(m_tools);
     m_steadyPop->setContent(m_steadyPanel);
@@ -611,7 +635,7 @@ void MainWindow::buildPopovers()
     m_colorPanel->canvasImage = [this] { return m_engine->renderImage(); };
     m_colorPanel->referenceImage = [this] { return m_refPanel->image(); };
     connect(m_colorPanel, &ColorPanel::message, this, [this](const QString& text) { m_toast->showMessage(text); });
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop}) {
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
         p->setTopInset(kTopBarHeight);
         connect(p, &Popover::dismissed, this, [this] { m_canvas->setFocus(); });
         connect(p, &Popover::pinnedChanged, this, [this](bool pinned) {
@@ -624,6 +648,7 @@ void MainWindow::buildPopovers()
     m_colorPop->setObjectName(QStringLiteral("color-popover"));
     m_refPop->setObjectName(QStringLiteral("reference-popover"));
     m_steadyPop->setObjectName(QStringLiteral("steady-popover"));
+    m_modelPop->setObjectName(QStringLiteral("model-popover"));
 }
 
 QWidget* MainWindow::anchorOf(Popover* popover) const
@@ -636,6 +661,8 @@ QWidget* MainWindow::anchorOf(Popover* popover) const
         return m_refBtn;
     if (popover == m_steadyPop)
         return m_steadyBtn;
+    if (popover == m_modelPop)
+        return m_modelBtn;
     return m_colorBtn;
 }
 
@@ -643,7 +670,7 @@ QWidget* MainWindow::anchorOf(Popover* popover) const
 void MainWindow::savePanels() const
 {
     QSettings st;
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop}) {
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
         const QString key = QStringLiteral("panels/") + p->objectName();
         st.setValue(key + QStringLiteral("/pinned"), p->isPinned());
         st.setValue(key + QStringLiteral("/pos"), p->pinnedPos());
@@ -654,7 +681,7 @@ void MainWindow::savePanels() const
 void MainWindow::restorePanels()
 {
     QSettings st;
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop}) {
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
         const QString key = QStringLiteral("panels/") + p->objectName();
         if (!st.value(key + QStringLiteral("/pinned"), false).toBool())
             continue;
@@ -675,7 +702,7 @@ void MainWindow::restorePanels()
 void MainWindow::setPanelsSuppressed(bool suppressed)
 {
     if (suppressed) {
-        for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop}) {
+        for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
             if (p->isVisible() && p->isPinned() && !m_suppressed.contains(p)) {
                 m_suppressed.push_back(p);
                 p->hidePanel();
@@ -760,6 +787,7 @@ void MainWindow::buildShortcuts()
     add(QKeySequence(Qt::Key_BraceRight), [this] { m_tools->setOpacity(m_tools->opacity() + 0.05f); });
     add(QKeySequence(Qt::Key_L), [this] { togglePopover(m_layerPop, m_layersBtn); });
     add(QKeySequence(Qt::Key_R), [this] { togglePopover(m_refPop, m_refBtn); });
+    add(QKeySequence(Qt::SHIFT | Qt::Key_R), [this] { togglePopover(m_modelPop, m_modelBtn); });
     add(QKeySequence(Qt::Key_Y), [this] { togglePopover(m_steadyPop, m_steadyBtn); });
     add(QKeySequence(Qt::Key_C), [this] { togglePopover(m_colorPop, m_colorBtn); });
     add(QKeySequence(Qt::Key_X), [this] { m_tools->swapColor(); });
@@ -910,6 +938,31 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* e)
     return QMainWindow::eventFilter(obj, e);
 }
 
+void MainWindow::setAnimationAssist(bool on)
+{
+    Animation a = m_engine->animation();
+    a.enabled = on;
+    m_engine->setAnimation(a);
+    if (on && m_engine->frames().size() <= 1)
+        m_toast->showMessage(tr("Every layer is a frame: + in the timeline adds the next one"));
+}
+
+void MainWindow::syncTimeline()
+{
+    const bool on = m_engine->animation().enabled;
+    if (!on && m_timeline->playing())
+        m_timeline->play(false);
+    if (m_timeline->isVisible() != on) {
+        m_timeline->setVisible(on);
+        if (on)
+            m_timeline->raise();
+        layoutOverlays();
+        // The whole canvas above the timeline, and all of it again without.
+        m_canvas->setBottomInset(on ? m_timeline->preferredHeight() + 12 : 0);
+        m_canvas->fitToView();
+    }
+}
+
 void MainWindow::layoutOverlays()
 {
     const QSize s = m_host->size();
@@ -917,31 +970,37 @@ void MainWindow::layoutOverlays()
     m_topBar->setGeometry(0, 0, s.width(), kTopBarHeight);
     const QSize sb = m_sideBar->sizeHint();
     m_sideBar->setGeometry(0, std::max(kTopBarHeight + 12, (s.height() - sb.height()) / 2 + 12), sb.width(), sb.height());
+    // The bars along the bottom stand on the timeline while it is there.
+    const int lift = (m_timeline && m_timeline->isVisible()) ? m_timeline->preferredHeight() + 12 : 0;
     if (m_shapePill) {
         const QSize ps = m_shapePill->sizeHint();
         m_shapePill->setGeometry((s.width() - ps.width()) / 2, kTopBarHeight + 12, ps.width(), 34);
     }
     if (m_selectBar) {
         const QSize sb2 = m_selectBar->sizeHint();
-        m_selectBar->setGeometry((s.width() - sb2.width()) / 2, s.height() - sb2.height() - 28, sb2.width(), sb2.height());
+        m_selectBar->setGeometry((s.width() - sb2.width()) / 2, s.height() - sb2.height() - 28 - lift, sb2.width(), sb2.height());
     }
     if (m_textBar) {
         const QSize tb = m_textBar->sizeHint();
-        m_textBar->setGeometry((s.width() - tb.width()) / 2, s.height() - tb.height() - 28, tb.width(), tb.height());
+        m_textBar->setGeometry((s.width() - tb.width()) / 2, s.height() - tb.height() - 28 - lift, tb.width(), tb.height());
     }
     if (m_gradientBar) {
         const QSize gb = m_gradientBar->sizeHint();
-        m_gradientBar->setGeometry((s.width() - gb.width()) / 2, s.height() - gb.height() - 28, gb.width(), gb.height());
+        m_gradientBar->setGeometry((s.width() - gb.width()) / 2, s.height() - gb.height() - 28 - lift, gb.width(), gb.height());
     }
     if (m_guideBar) {
         const QSize gb = m_guideBar->sizeHint();
-        m_guideBar->setGeometry((s.width() - gb.width()) / 2, s.height() - gb.height() - 28, gb.width(), gb.height());
+        m_guideBar->setGeometry((s.width() - gb.width()) / 2, s.height() - gb.height() - 28 - lift, gb.width(), gb.height());
     }
     if (m_editBar) {
         const QSize eb = m_editBar->sizeHint();
-        m_editBar->setGeometry((s.width() - eb.width()) / 2, s.height() - eb.height() - 28, eb.width(), eb.height());
+        m_editBar->setGeometry((s.width() - eb.width()) / 2, s.height() - eb.height() - 28 - lift, eb.width(), eb.height());
     }
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop}) {
+    if (m_timeline && m_timeline->isVisible()) {
+        const int left = sb.width() + 10;
+        m_timeline->setGeometry(left, s.height() - m_timeline->preferredHeight() - 12, s.width() - left - 12, m_timeline->preferredHeight());
+    }
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
         if (p && p->isVisible())
             p->reposition();
     }
@@ -964,7 +1023,7 @@ void MainWindow::showBrushLab()
             m_canvas->setFocus();
         });
     }
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop}) {
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
         if (!p->isPinned())
             p->hidePanel();
     }
@@ -1216,7 +1275,7 @@ void MainWindow::togglePopover(Popover* popover, QWidget* anchor)
 
 void MainWindow::closePopovers()
 {
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop})
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop})
         p->dismiss();
 }
 
@@ -1243,6 +1302,10 @@ void MainWindow::showActionsMenu()
     menu.addAction(tr("Invert Selection\tCtrl+Shift+I"), this, [this] { m_engine->invertSelection(); });
     menu.addAction(tr("Fill with a Click\tG"), this, [this] { m_canvas->armFill(true); });
     menu.addAction(tr("Gradient\tShift+G"), this, [this] { m_canvas->setGradientMode(true); });
+    menu.addSeparator();
+    QAction* animation = menu.addAction(tr("Animation Assist"), this, [this] { setAnimationAssist(!m_engine->animation().enabled); });
+    animation->setCheckable(true);
+    animation->setChecked(m_engine->animation().enabled);
     menu.addSeparator();
     menu.addAction(tr("Crop or Extend Canvas…"), this, &MainWindow::startCrop);
     menu.addAction(tr("Resize Image…"), this, &MainWindow::resizeImage);
@@ -1572,11 +1635,16 @@ bool MainWindow::editing() const
 void MainWindow::setEditingUi(bool on)
 {
     for (QWidget* w : std::initializer_list<QWidget*>{m_fileBtn, m_actionsBtn, m_adjustBtn, m_transformBtn, m_guidesBtn, m_steadyBtn, m_selectBtn, m_toolBtn[0],
-                                                      m_toolBtn[1], m_toolBtn[2], m_refBtn, m_layersBtn, m_colorBtn, m_pickBtn,
+                                                      m_toolBtn[1], m_toolBtn[2], m_refBtn, m_modelBtn, m_layersBtn, m_colorBtn, m_pickBtn,
                                                       m_sizeSlider, m_opacitySlider})
         w->setEnabled(!on);
-    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop})
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop})
         p->setEnabled(!on);   // a pinned panel waits while an edit is in progress
+    if (m_timeline) {
+        if (on)
+            m_timeline->play(false);
+        m_timeline->setEnabled(!on);
+    }
     m_undoBtn->setEnabled(!on && m_engine->history().canUndo());
     m_redoBtn->setEnabled(!on && m_engine->history().canRedo());
 }

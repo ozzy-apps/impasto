@@ -7,6 +7,7 @@
 #include "color/Palette.h"
 #include "engine/CanvasEngine.h"
 #include "gfx/Gl.h"
+#include "io/AnimationExport.h"
 #include "io/DocumentIO.h"
 #include "io/Interchange.h"
 #include "io/Layered.h"
@@ -16,6 +17,7 @@
 #include "io/Zip.h"
 #include "shape/Perspective.h"
 #include "shape/QuickShape.h"
+#include "model/Model3D.h"
 #include "ui/BrushLab.h"
 #include "ui/CanvasWidget.h"
 #include "ui/ColorPanel.h"
@@ -30,6 +32,9 @@
 #include "ui/Widgets.h"
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/Timeline.h"
+#include "ui/ModelPanel.h"
+#include "ui/ModelView.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -46,6 +51,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFloat16>
+#include <QImageReader>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPointingDevice>
@@ -54,6 +60,8 @@
 #include <QSpinBox>
 #include <QScrollArea>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QProcess>
 #include <QPushButton>
 #include <QTabletEvent>
 #include <QTemporaryDir>
@@ -3494,6 +3502,336 @@ static void buildInterchangeSample(CanvasEngine& engine, bool allModes)
     }
 }
 
+// 3D reference: the files a model comes in, the figure, and posing it.
+static bool runModelTests(const QString& outPath)
+{
+    bool all = true;
+    auto check = [&](const QString& what, bool ok) {
+        all = all && ok;
+        qInfo().noquote() << QStringLiteral("  %1 %2").arg(ok ? "ok    " : "FAILED").arg(what);
+    };
+    auto close = [](const QVector3D& a, const QVector3D& b, float tol = 1e-3f) { return (a - b).length() <= tol; };
+    QString error;
+
+    // OBJ: a cube of quads, no normals; STL: a binary triangle standing on Z.
+    const QString obj = outPath + QStringLiteral(".cube.obj");
+    {
+        QFile f(obj);
+        f.open(QIODevice::WriteOnly);
+        f.write("# a cube\nv -1 -1 -1\nv 1 -1 -1\nv 1 1 -1\nv -1 1 -1\nv -1 -1 1\nv 1 -1 1\nv 1 1 1\nv -1 1 1\n"
+                "f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 4 8 7 3\nf 1 5 8 4\nf 2 3 7 6\n");
+    }
+    Model3D cube;
+    const bool objOk = Model3D::load(obj, &cube, &error) && cube.meshes.size() == 1 && cube.meshes[0].indices.size() == 36
+                       && cube.meshes[0].normals.size() == cube.meshes[0].positions.size();
+    QVector3D lo, hi;
+    const bool cubeBounds = objOk && cube.bounds(&lo, &hi) && close(lo, QVector3D(-1, -1, -1)) && close(hi, QVector3D(1, 1, 1));
+    const QString stl = outPath + QStringLiteral(".tri.stl");
+    {
+        QByteArray b(80, ' ');
+        auto u32 = [&](quint32 v) { b.append(reinterpret_cast<const char*>(&v), 4); };
+        auto f32 = [&](float v) { b.append(reinterpret_cast<const char*>(&v), 4); };
+        u32(1);
+        for (float v : {0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f})
+            f32(v);
+        b.append(2, '\0');
+        QFile f(stl);
+        f.open(QIODevice::WriteOnly);
+        f.write(b);
+    }
+    Model3D tri;
+    const bool stlOk = Model3D::load(stl, &tri, &error) && tri.meshes.size() == 1 && tri.meshes[0].positions.size() == 3
+                       && close(tri.meshes[0].positions[2], QVector3D(0, 1, 0));
+    check(QStringLiteral("3D: an OBJ cube of quads opens as 12 triangles with normals made for it; a binary STL opens and is stood upright"),
+          objOk && cubeBounds && stlOk);
+
+    // glTF: a strip of two bones, its buffer inside the file, bent at its middle joint.
+    QByteArray bin;
+    auto f32 = [&](float v) { bin.append(reinterpret_cast<const char*>(&v), 4); };
+    for (int row = 0; row < 3; ++row)
+        for (float x : {-0.1f, 0.1f}) {
+            f32(x);
+            f32(float(row));
+            f32(0.0f);
+        }
+    const int jointsAt = int(bin.size());
+    for (int row = 0; row < 3; ++row)
+        for (int k = 0; k < 2; ++k)
+            bin.append(QByteArray::fromRawData(row == 2 ? "\x01\x00\x00\x00" : row == 1 ? "\x00\x01\x00\x00" : "\x00\x00\x00\x00", 4));
+    const int weightsAt = int(bin.size());
+    for (int row = 0; row < 3; ++row)
+        for (int k = 0; k < 2; ++k) {
+            f32(row == 1 ? 0.5f : 1.0f);
+            f32(row == 1 ? 0.5f : 0.0f);
+            f32(0.0f);
+            f32(0.0f);
+        }
+    const int indicesAt = int(bin.size());
+    for (quint16 i : {0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4})
+        bin.append(reinterpret_cast<const char*>(&i), 2);
+    const int ibmAt = int(bin.size());
+    for (float v : {1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f,
+                    1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -1.f, 0.f, 1.f})
+        f32(v);
+    auto view = [](int offset, int length) { return QJsonObject{{"buffer", 0}, {"byteOffset", offset}, {"byteLength", length}}; };
+    auto accessor = [](int bufferView, int type, int count, const char* kind) {
+        return QJsonObject{{"bufferView", bufferView}, {"componentType", type}, {"count", count}, {"type", kind}};
+    };
+    QJsonObject gltf{
+        {"asset", QJsonObject{{"version", "2.0"}}},
+        {"scene", 0},
+        {"scenes", QJsonArray{QJsonObject{{"nodes", QJsonArray{0, 2}}}}},
+        {"nodes", QJsonArray{QJsonObject{{"name", "root"}, {"children", QJsonArray{1}}},
+                             QJsonObject{{"name", "bend"}, {"translation", QJsonArray{0, 1, 0}}},
+                             QJsonObject{{"name", "strip"}, {"mesh", 0}, {"skin", 0}}}},
+        {"skins", QJsonArray{QJsonObject{{"joints", QJsonArray{0, 1}}, {"inverseBindMatrices", 4}}}},
+        {"meshes", QJsonArray{QJsonObject{{"primitives", QJsonArray{QJsonObject{
+                       {"attributes", QJsonObject{{"POSITION", 0}, {"JOINTS_0", 1}, {"WEIGHTS_0", 2}}}, {"indices", 3}}}}}}},
+        {"bufferViews", QJsonArray{view(0, jointsAt), view(jointsAt, weightsAt - jointsAt), view(weightsAt, indicesAt - weightsAt),
+                                   view(indicesAt, ibmAt - indicesAt), view(ibmAt, int(bin.size()) - ibmAt)}},
+        {"accessors", QJsonArray{accessor(0, 5126, 6, "VEC3"), accessor(1, 5121, 6, "VEC4"), accessor(2, 5126, 6, "VEC4"),
+                                 accessor(3, 5123, 12, "SCALAR"), accessor(4, 5126, 2, "MAT4")}},
+    };
+    QJsonObject embedded = gltf;
+    embedded["buffers"] = QJsonArray{QJsonObject{{"byteLength", int(bin.size())}, {"uri", QStringLiteral("data:application/octet-stream;base64,") + QString::fromLatin1(bin.toBase64())}}};
+    const QString gltfPath = outPath + QStringLiteral(".strip.gltf"), glbPath = outPath + QStringLiteral(".strip.glb");
+    {
+        QFile f(gltfPath);
+        f.open(QIODevice::WriteOnly);
+        f.write(QJsonDocument(embedded).toJson());
+    }
+    {
+        QJsonObject binary = gltf;
+        binary["buffers"] = QJsonArray{QJsonObject{{"byteLength", int(bin.size())}}};
+        QByteArray json = QJsonDocument(binary).toJson(QJsonDocument::Compact);
+        while (json.size() % 4)
+            json.append(' ');
+        QByteArray padded = bin;
+        while (padded.size() % 4)
+            padded.append('\0');
+        QByteArray glb("glTF");
+        auto u32 = [&](quint32 v) { glb.append(reinterpret_cast<const char*>(&v), 4); };
+        u32(2);
+        u32(quint32(12 + 8 + json.size() + 8 + padded.size()));
+        u32(quint32(json.size()));
+        u32(0x4E4F534A);
+        glb.append(json);
+        u32(quint32(padded.size()));
+        u32(0x004E4942);
+        glb.append(padded);
+        QFile f(glbPath);
+        f.open(QIODevice::WriteOnly);
+        f.write(glb);
+    }
+    Model3D strip, stripGlb;
+    const bool gltfOk = Model3D::load(gltfPath, &strip, &error) && strip.instances.size() == 1 && strip.instances[0].skin == 0 && strip.handles.size() == 1
+                        && strip.handles[0].at == 1 && strip.handles[0].turns == 0;
+    const bool glbOk = Model3D::load(glbPath, &stripGlb, &error) && stripGlb.instances.size() == 1;
+    bool bent = false;
+    if (gltfOk && glbOk) {
+        // The upper bone turned a quarter about the middle joint: the top swings over to the left.
+        strip.turnNode(1, QQuaternion::fromAxisAndAngle(0, 0, 1, 90));
+        stripGlb.turnNode(1, QQuaternion::fromAxisAndAngle(0, 0, 1, 90));
+        const auto a = strip.posed(), b = stripGlb.posed();
+        const auto& p = a[0].positions;
+        bent = close(p[0], QVector3D(-0.1f, 0, 0)) && close(p[2], QVector3D(-0.05f, 0.95f, 0)) && close(p[4], QVector3D(-1.0f, 0.9f, 0))   // the middle is half each bone's
+               && close(p[5], QVector3D(-1.0f, 1.1f, 0)) && close(b[0].positions[5], p[5]);
+    }
+    check(QStringLiteral("3D: a rigged glTF (buffer inside) and the same as GLB open with one joint to take hold of; turned, the upper bone swings and the skin follows"),
+          gltfOk && glbOk && bent);
+
+    // The figure: a person's height, standing on the floor, with its handles.
+    Model3D figure = Model3D::makeFigure();
+    const bool standing = figure.bounds(&lo, &hi) && hi.y() > 1.68f && hi.y() < 1.82f && std::abs(lo.y()) < 0.04f;
+    const auto world = figure.worldTransforms();
+    auto nodeId = [&](const char* name) {
+        for (size_t i = 0; i < figure.nodes.size(); ++i)
+            if (figure.nodes[i].name == QLatin1String(name))
+                return int(i);
+        return -1;
+    };
+    const int shoulder = nodeId("upperarm.L"), elbow = nodeId("forearm.L"), hand = nodeId("hand.L");
+    // Turning a joint carries everything below it round the joint, the way it was asked.
+    const QQuaternion q = QQuaternion::fromAxisAndAngle(1, 0, 0, -70);
+    const QVector3D pivot = figure.jointPosition(shoulder, world), elbowBefore = figure.jointPosition(elbow, world);
+    figure.turnNode(shoulder, q);
+    const auto turned = figure.worldTransforms();
+    const bool carried = close(figure.jointPosition(elbow, turned), pivot + q.rotatedVector(elbowBefore - pivot), 2e-3f);
+    const QVariantList state = figure.poseState();
+    figure.resetPose();
+    const bool reset = !figure.posed_() && close(figure.jointPosition(elbow, figure.worldTransforms()), elbowBefore);
+    figure.setPoseState(state);
+    const bool restored = close(figure.jointPosition(elbow, figure.worldTransforms()), figure.jointPosition(elbow, turned));
+    figure.applyFigurePose(QStringLiteral("T-pose"));
+    const QVector3D handT = figure.jointPosition(hand, figure.worldTransforms());
+    figure.applyFigurePose(QStringLiteral("Sit"));
+    const bool sat = figure.nodes[0].offset.y() < -0.3f;
+    check(QStringLiteral("3D: the figure stands %1 m tall on the floor with %2 handles; a joint turned carries the arm round it; the pose comes back as kept; T-pose holds the hand out at %3 m")
+              .arg(hi.y(), 0, 'f', 2).arg(figure.handles.size()).arg(handT.x(), 0, 'f', 2),
+          standing && figure.handles.size() == 17 && carried && reset && restored && handT.x() > 0.7f && std::abs(handT.y() - 1.42f) < 0.12f && sat);
+    return all;
+}
+
+// Animation: frames, onion skins, holds, the background frame, and the files it goes out as.
+static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
+{
+    bool all = true;
+    auto check = [&](const QString& what, bool ok) {
+        all = all && ok;
+        qInfo().noquote() << QStringLiteral("  %1 %2").arg(ok ? "ok    " : "FAILED").arg(what);
+    };
+    auto near = [](const QColor& c, int r, int g, int b, int tol) {
+        return c.isValid() && std::abs(c.red() - r) <= tol && std::abs(c.green() - g) <= tol && std::abs(c.blue() - b) <= tol;
+    };
+    auto block = [](const QColor& c, int x) {
+        QImage img(60, 100, QImage::Format_ARGB32_Premultiplied);
+        img.fill(c);
+        return std::make_pair(img, QPoint(x, 100));
+    };
+    engine.newDocument(QSize(400, 300), Qt::white);
+    const int empty = engine.activeLayerId();
+    const auto [redImg, redAt] = block(QColor(220, 30, 30), 20);
+    const auto [blueImg, blueAt] = block(QColor(30, 30, 220), 160);
+    const auto [greenImg, greenAt] = block(QColor(30, 160, 60), 300);
+    const int red = engine.addImageLayer(redImg, QStringLiteral("Red"), redAt);
+    const int blue = engine.addImageLayer(blueImg, QStringLiteral("Blue"), blueAt);
+    const int green = engine.addImageLayer(greenImg, QStringLiteral("Green"), greenAt);
+    engine.removeLayer(empty);
+    engine.setActiveLayer(green);
+    const QImage still = engine.renderImage();
+    const bool allThree = near(still.pixelColor(50, 150), 220, 30, 30, 2) && near(still.pixelColor(190, 150), 30, 30, 220, 2) && near(still.pixelColor(330, 150), 30, 160, 60, 2);
+
+    // One frame at a time, the one before it faded behind it.
+    Animation anim;
+    anim.enabled = true;
+    anim.onionFrames = 1;
+    anim.onionOpacity = 0.5f;
+    anim.tintOnion = false;
+    engine.setAnimation(anim);
+    const QImage frame = engine.renderImage();
+    const bool alone = engine.frames() == QVector<int>{red, blue, green} && engine.currentFrame() == 2 && near(frame.pixelColor(330, 150), 30, 160, 60, 2)
+                       && near(frame.pixelColor(190, 150), 255, 255, 255, 1) && near(frame.pixelColor(50, 150), 255, 255, 255, 1);
+    const QColor onion = engine.pickColor(QPoint(190, 150));
+    const bool faded = near(onion, 142, 142, 237, 4) && near(engine.pickColor(QPoint(50, 150)), 255, 255, 255, 1);
+    anim.tintOnion = true;
+    engine.setAnimation(anim);
+    const QColor tinted = engine.pickColor(QPoint(190, 150));
+    const bool reddened = tinted.red() > tinted.blue() + 40 && tinted.red() > tinted.green() + 40;
+    check(QStringLiteral("animation: each top-level layer is a frame and shows alone; the one before is faded behind it (%1), tinted red when asked (%2)")
+              .arg(onion.name(), tinted.name()),
+          allThree && alone && faded && reddened);
+
+    // Choosing a frame chooses its layer; the first frame can stay as a background.
+    engine.showFrame(0);
+    const QImage first = engine.renderImage();
+    const bool chosen = engine.activeLayerId() == red && near(first.pixelColor(50, 150), 220, 30, 30, 2) && near(first.pixelColor(330, 150), 255, 255, 255, 1);
+    anim.background = true;
+    engine.setAnimation(anim);
+    const QImage withBackground = engine.renderFrame(2);
+    const bool background = near(withBackground.pixelColor(50, 150), 220, 30, 30, 2) && near(withBackground.pixelColor(330, 150), 30, 160, 60, 2)
+                            && near(withBackground.pixelColor(190, 150), 255, 255, 255, 1);
+    anim.background = false;
+    engine.setAnimation(anim);
+    check(QStringLiteral("animation: showing the first frame makes its layer the active one; as a background it stays under the others"), chosen && background);
+
+    // Holds are an undo step; a new frame goes straight after the current one.
+    engine.setFrameHold(blue, 3);
+    const bool held = engine.layerInfo(blue).hold == 3;
+    engine.undo();
+    const bool undone = engine.layerInfo(blue).hold == 1;
+    engine.redo();
+    engine.showFrame(0);
+    const int added = engine.addFrame();
+    const bool placed = engine.frames().size() == 4 && engine.frames()[1] == added && engine.currentFrame() == 1;
+    engine.undo();
+    const bool oneStep = engine.frames() == QVector<int>{red, blue, green};
+    check(QStringLiteral("animation: a frame's hold is an undo step; a new frame goes in after the current one, as one step"),
+          held && undone && engine.layerInfo(blue).hold == 3 && placed && oneStep);
+
+    // A group is one frame, put together.
+    engine.showFrame(1);
+    const int grouped = engine.groupLayer(blue);
+    const QImage thumb = engine.frameThumbnail(1, 64);
+    const bool groupFrame = engine.frames().size() == 3 && engine.frames()[1] == grouped && !thumb.isNull() && thumb.width() == 64;
+    engine.undo();
+    check(QStringLiteral("animation: a group is one frame, and its thumbnail shows what is in it"), groupFrame && engine.frames() == QVector<int>{red, blue, green});
+
+    // Kept with the document.
+    anim.fps = 10;
+    anim.playback = Animation::Playback::PingPong;
+    anim.onionFrames = 3;
+    engine.setAnimation(anim);
+    engine.showFrame(1);
+    QString error;
+    const QString doc = outPath + QStringLiteral(".animation.imp");
+    const bool saved = docio::save(engine, doc, &error);
+    engine.newDocument(QSize(64, 64), Qt::white);
+    const bool loaded = saved && docio::load(engine, doc, &error);
+    const QVector<int> back = engine.frames();
+    const bool kept = loaded && engine.animation() == anim && back.size() == 3 && engine.layerInfo(back[1]).hold == 3 && engine.currentFrame() == 1 && !engine.isModified();
+    check(QStringLiteral("animation: the frame rate, ping-pong, onion skins, holds and the current frame are kept in the file"), kept);
+
+    // Out as an animated GIF and an animated PNG.
+    QVector<animio::Frame> frames;
+    for (int i = 0; i < back.size(); ++i)
+        frames.push_back({engine.renderFrame(i), engine.layerInfo(back[i]).hold});
+    const QString gif = outPath + QStringLiteral(".animation.gif"), apng = outPath + QStringLiteral(".animation.png");
+    const bool gifWritten = animio::writeGif(gif, frames, 10, true, &error);
+    QImageReader reader(gif);
+    QVector<QImage> read;
+    QList<int> delays;
+    while (reader.canRead()) {
+        const QImage img = reader.read();
+        if (img.isNull())
+            break;
+        read.push_back(img);
+        delays.push_back(reader.nextImageDelay());
+    }
+    std::sort(delays.begin(), delays.end());
+    const bool gifOk = gifWritten && read.size() == 3 && reader.loopCount() == -1 && delays == QList<int>{100, 100, 300}
+                       && near(read[0].pixelColor(50, 150), 220, 30, 30, 24) && near(read[1].pixelColor(190, 150), 30, 30, 220, 24)
+                       && near(read[2].pixelColor(330, 150), 30, 160, 60, 24) && near(read[0].pixelColor(330, 150), 255, 255, 255, 16);
+    const bool apngWritten = animio::writeApng(apng, frames, 10, true, &error);
+    QFile file(apng);
+    file.open(QIODevice::ReadOnly);
+    const QByteArray bytes = file.readAll();
+    file.close();
+    int fctl = 0, fdat = 0, numFrames = -1, secondDelay = -1;
+    for (qsizetype at = 8; at + 12 <= bytes.size();) {
+        auto u32 = [&](qsizetype i) { return int(quint32(uchar(bytes[i])) << 24 | quint32(uchar(bytes[i + 1])) << 16 | quint32(uchar(bytes[i + 2])) << 8 | quint32(uchar(bytes[i + 3]))); };
+        const int length = u32(at);
+        const QByteArray type = bytes.mid(at + 4, 4);
+        if (type == "acTL")
+            numFrames = u32(at + 8);
+        if (type == "fcTL" && ++fctl == 2)
+            secondDelay = (uchar(bytes[at + 8 + 20]) << 8 | uchar(bytes[at + 8 + 21])) * 1000 / std::max(1, (uchar(bytes[at + 8 + 22]) << 8 | uchar(bytes[at + 8 + 23])));
+        fdat += type == "fdAT";
+        at += 12 + length;
+    }
+    const QImage firstFrame(apng);
+    const bool apngOk = apngWritten && numFrames == 3 && fctl == 3 && fdat == 2 && secondDelay == 300 && near(firstFrame.pixelColor(50, 150), 220, 30, 30, 1);
+    check(QStringLiteral("animation: out as a GIF (%1 frames, %2 ms the held one, looping) and as an animated PNG (%3 frames, the default image the first)")
+              .arg(read.size()).arg(delays.value(2)).arg(numFrames),
+          gifOk && apngOk);
+    // A video, where ffmpeg is installed: each held frame repeated, so 1 + 3 + 1 frames.
+    if (!animio::ffmpegPath().isEmpty()) {
+        const QString video = outPath + QStringLiteral(".animation.mp4");
+        const bool written = animio::writeVideo(video, frames, 10, &error);
+        QProcess probe;
+        probe.start(QStandardPaths::findExecutable(QStringLiteral("ffprobe")),
+                    {QStringLiteral("-v"), QStringLiteral("error"), QStringLiteral("-count_frames"), QStringLiteral("-select_streams"), QStringLiteral("v:0"),
+                     QStringLiteral("-show_entries"), QStringLiteral("stream=nb_read_frames,width,height"), QStringLiteral("-of"), QStringLiteral("csv=p=0"), video});
+        probe.waitForFinished(30000);
+        const QString seen = QString::fromLatin1(probe.readAllStandardOutput()).trimmed();
+        check(QStringLiteral("animation: out as an MP4 video through ffmpeg (width, height, frames: %1)").arg(seen),
+              written && seen == QLatin1String("400,300,5"));
+    } else {
+        qInfo().noquote() << "  (no ffmpeg here: video export not tried)";
+    }
+    engine.newDocument(QSize(64, 64), Qt::white);
+    return all;
+}
+
 // The selection kept with the document, the newer gradients, masks on groups,
 // a group as the reference, spacing in text, and Procreate's palettes.
 static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
@@ -4100,9 +4438,13 @@ int runSelfTest(const QString& outPath)
                              .arg(double(CanvasEngine::graphicsMemoryBytes()) / double(1 << 30), 0, 'f', 1)
                              .arg(CanvasEngine::layerEstimate(QSize(3840, 2160)));
 
-    // IMPASTO_ONLY=gaps runs just the checks for the small everyday parts, while working on them.
+    // IMPASTO_ONLY=gaps (or animation) runs just those checks, while working on them.
     if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("gaps"))
         return runSmallGapTests(engine, outPath) ? 0 : 2;
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("animation"))
+        return runAnimationTests(engine, outPath) ? 0 : 2;
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("model"))
+        return runModelTests(outPath) ? 0 : 2;
 
     const BrushLibrary& lib = BrushLibrary::instance();
     engine.newDocument(QSize(1800, 1300), QColor(250, 247, 240));
@@ -4279,11 +4621,15 @@ int runSelfTest(const QString& outPath)
     const bool textOk = runTextTests(engine, outPath + QStringLiteral(".text.imp"));
     qInfo().noquote() << "selection in the file, gradients, group masks and references, text spacing, palettes:";
     const bool gapsOk = runSmallGapTests(engine, outPath);
+    qInfo().noquote() << "animation:";
+    const bool animationOk = runAnimationTests(engine, outPath);
+    qInfo().noquote() << "3D reference:";
+    const bool modelOk = runModelTests(outPath);
     qInfo().noquote() << "layered files for other programs:";
     const bool interchangeOk = runInterchangeTests(engine, outPath);
     qInfo().noquote() << "layers stored only where there is paint:";
     const bool sparseOk = runSparseTests(engine, outPath + QStringLiteral(".sparse.imp"));
-    return undoOk && editOk && ioOk && opsOk && editingOk && structureOk && floodOk && smoothingOk && guidesOk && warpOk && liquifyOk && gradientOk && sizeOk && adjustOk && perspectiveOk && brushesOk && coloursOk && histogramOk && blendOk && textOk && sparseOk && interchangeOk && gapsOk && shapeFailures == 0 ? 0 : 2;
+    return undoOk && editOk && ioOk && opsOk && editingOk && structureOk && floodOk && smoothingOk && guidesOk && warpOk && liquifyOk && gradientOk && sizeOk && adjustOk && perspectiveOk && brushesOk && coloursOk && histogramOk && blendOk && textOk && sparseOk && interchangeOk && gapsOk && animationOk && modelOk && shapeFailures == 0 ? 0 : 2;
 }
 
 int runBrushSheet(const QString& outPath)
@@ -4684,6 +5030,264 @@ static void dumpStackAndExit(int)
     _exit(124);
 }
 
+// The 3D reference through the window: the figure on show, turned, posed by a joint, and placed.
+static bool runModelUi(MainWindow& window, CanvasEngine& engine, const std::function<void(QWidget*, const QPointF&)>& penTap,
+                       const std::function<void(QEvent::Type, const QPointF&, qreal, Qt::MouseButton, Qt::MouseButtons)>& penWindow,
+                       const std::function<void(const QString&)>& capture, const std::function<void()>& settle)
+{
+    QStringList log;
+    bool ok = true;
+    auto check = [&](const QString& what, bool passed) {
+        ok = ok && passed;
+        log << QStringLiteral("%1 %2").arg(passed ? "ok    " : "FAILED", what);
+    };
+    auto drag = [&](QWidget* w, const QPointF& from, const QPointF& to) {
+        const QPointF a = w->mapTo(&window, from.toPoint()), b = w->mapTo(&window, to.toPoint());
+        penWindow(QEvent::TabletMove, a, 0.0, Qt::NoButton, Qt::NoButton);
+        penWindow(QEvent::TabletPress, a, 0.5, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 12; ++i)
+            penWindow(QEvent::TabletMove, a + (b - a) * (i / 12.0), 0.6, Qt::NoButton, Qt::LeftButton);
+        penWindow(QEvent::TabletRelease, b, 0.0, Qt::LeftButton, Qt::NoButton);
+        settle();
+    };
+    engine.newDocument(QSize(1600, 1200), Qt::white);
+    window.showForScreenshot(QStringLiteral("main"));
+    settle();
+    auto* button = window.findChild<QWidget*>(QStringLiteral("model-button"));
+    penTap(button, QPointF(button->width() / 2.0, button->height() / 2.0));
+    settle();
+    auto* pop = window.findChild<Popover*>(QStringLiteral("model-popover"));
+    ModelPanel* panel = window.modelPanel();
+    ModelView* view = panel ? panel->view() : nullptr;
+    if (!pop || !pop->isVisible() || !view || !view->model()) {
+        check(QStringLiteral("the cube button opens the 3D panel with the figure in it"), false);
+        for (const QString& line : log)
+            qInfo().noquote() << "3D reference:" << line;
+        return false;
+    }
+    panel->showFigure();
+    view->fit();
+    settle();
+    const QImage first = view->grabFramebuffer();
+    const QColor middle = first.pixelColor(first.width() / 2, int(first.height() * 0.45));
+    const bool drawn = view->model()->figure && std::abs(middle.red() - 54) + std::abs(middle.green() - 54) > 30;
+    check(QStringLiteral("the cube button opens the 3D panel, the figure on show in it (%1 in the middle of the view)").arg(middle.name()), drawn);
+    capture(QStringLiteral("model-figure"));
+
+    // Turned with a drag.
+    const double yawBefore = view->yaw();
+    drag(view, QPointF(view->width() * 0.5, view->height() * 0.8), QPointF(view->width() * 0.5 + 120, view->height() * 0.8));
+    check(QStringLiteral("a drag across the view turns the figure round (%1° to %2°)").arg(yawBefore, 0, 'f', 0).arg(view->yaw(), 0, 'f', 0),
+          std::abs(view->yaw() - yawBefore) > 30.0);
+
+    // Posed by its left elbow, dragged out.
+    auto* modes = window.findChild<SegmentBar*>(QStringLiteral("model-modes"));
+    penTap(modes, modes->segmentRect(1).center());
+    const int elbowHandle = 5;   // after hips, chest, neck, head and the top of the head
+    Model3D* figure = view->model();
+    auto nodeId = [&](const char* name) {
+        for (size_t i = 0; i < figure->nodes.size(); ++i)
+            if (figure->nodes[i].name == QLatin1String(name))
+                return int(i);
+        return -1;
+    };
+    const QVector3D handBefore = figure->jointPosition(nodeId("hand.L"), figure->worldTransforms());
+    const QPointF elbowAt = view->handlePositions().value(elbowHandle);
+    const QPointF shoulderAt = view->project(figure->jointPosition(nodeId("upperarm.L"), figure->worldTransforms()));
+    // Round the shoulder, away from the body.
+    const QPointF away = shoulderAt + (elbowAt - shoulderAt) * 0.2 + QPointF((elbowAt.x() > shoulderAt.x() ? 1 : -1) * 70.0, -20.0);
+    drag(view, elbowAt, away);
+    const QVector3D handAfter = figure->jointPosition(nodeId("hand.L"), figure->worldTransforms());
+    check(QStringLiteral("in Pose, the elbow dragged out lifts the arm: the hand moves %1 m").arg((handAfter - handBefore).length(), 0, 'f', 2),
+          view->mode() == ModelView::Mode::Pose && (handAfter - handBefore).length() > 0.15f);
+    capture(QStringLiteral("model-pose"));
+
+    // The light moved with a drag in Light, and made hard.
+    penTap(modes, modes->segmentRect(2).center());
+    const QVector3D lightBefore = view->lightDirection();
+    drag(view, QPointF(view->width() * 0.3, view->height() * 0.5), QPointF(view->width() * 0.6, view->height() * 0.4));
+    auto* hard = window.findChild<QWidget*>(QStringLiteral("model-hard"));
+    penTap(hard, QPointF(hard->width() / 2.0, hard->height() / 2.0));
+    check(QStringLiteral("in Light, a drag moves the light (it turns %1°); Hard light makes it two tones")
+              .arg(std::acos(std::clamp(double(QVector3D::dotProduct(lightBefore, view->lightDirection())), -1.0, 1.0)) * 180.0 / M_PI, 0, 'f', 0),
+          QVector3D::dotProduct(lightBefore, view->lightDirection()) < 0.95f && view->hardLight());
+    capture(QStringLiteral("model-light"));
+    penTap(hard, QPointF(hard->width() / 2.0, hard->height() / 2.0));
+    penTap(modes, modes->segmentRect(1).center());
+
+    // A named pose, then placed on the canvas as a layer.
+    IconButton* sit = nullptr;
+    for (IconButton* b : window.findChildren<IconButton*>(QStringLiteral("model-pose"))) {
+        if (b->property("pose").toString() == QLatin1String("Sit"))
+            sit = b;
+    }
+    if (sit)
+        penTap(sit, QPointF(sit->width() / 2.0, sit->height() / 2.0));
+    const bool seated = figure->nodes[0].offset.y() < -0.3f;
+    const int layersBefore = engine.layerCount();
+    auto* place = window.findChild<QWidget*>(QStringLiteral("model-place"));
+    penTap(place, QPointF(place->width() / 2.0, place->height() / 2.0));
+    settle();
+    const LayerInfo placed = engine.layerInfo(engine.activeLayerId());
+    const QRect inked = engine.layerContentBounds(engine.activeLayerId());
+    check(QStringLiteral("Sit seats the figure; Place puts the view on the canvas as a layer of its own (%1 x %2 px of figure)").arg(inked.width()).arg(inked.height()),
+          seated && engine.layerCount() == layersBefore + 1 && placed.name == QLatin1String("3D reference") && inked.height() > 300
+              && inked.width() < engine.canvasSize().width());
+    capture(QStringLiteral("model-placed"));
+    engine.undo();
+
+    // A model from a file in place of the figure: no figure poses for it.
+    QTemporaryDir dir;
+    const QString cube = dir.filePath(QStringLiteral("Box.obj"));
+    {
+        QFile f(cube);
+        f.open(QIODevice::WriteOnly);
+        f.write("v -1 0 -1\nv 1 0 -1\nv 1 2 -1\nv -1 2 -1\nv -1 0 1\nv 1 0 1\nv 1 2 1\nv -1 2 1\n"
+                "f 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 4 8 7 3\nf 1 5 8 4\nf 2 3 7 6\n");
+    }
+    const bool opened = panel->openModel(cube);
+    settle();
+    bool posesHidden = true;
+    for (IconButton* b : window.findChildren<IconButton*>(QStringLiteral("model-pose")))
+        posesHidden = posesHidden && !b->isVisible();
+    check(QStringLiteral("a model from a file takes the figure's place, without the figure's poses"),
+          opened && view->model() && !view->model()->figure && view->model()->name == QLatin1String("Box") && posesHidden);
+    panel->showFigure();
+    pop->hidePanel();
+    for (const QString& line : log)
+        qInfo().noquote() << "3D reference:" << line;
+    qInfo().noquote() << "3D reference:" << (ok ? "ok" : "FAILED");
+    engine.setModified(false);
+    return ok;
+}
+
+// Animation Assist through the window: the timeline, its frames, playback, settings and export.
+static bool runAnimationUi(MainWindow& window, CanvasEngine& engine, const std::function<void(QWidget*, const QPointF&)>& penTap,
+                           const std::function<void(const QString&)>& capture, const std::function<void()>& settle, const QString& outPrefix)
+{
+    QStringList log;
+    bool ok = true;
+    auto check = [&](const QString& what, bool passed) {
+        ok = ok && passed;
+        log << QStringLiteral("%1 %2").arg(passed ? "ok    " : "FAILED", what);
+    };
+    auto pause = [&](int ms) {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < ms)
+            QApplication::processEvents(QEventLoop::AllEvents, 5);
+    };
+    // A ball crossing the canvas, a frame for each place it is in.
+    engine.newDocument(QSize(1200, 800), Qt::white);
+    const int empty = engine.activeLayerId();
+    QVector<int> balls;
+    for (int k = 0; k < 4; ++k) {
+        QImage ball(140, 140, QImage::Format_ARGB32_Premultiplied);
+        ball.fill(Qt::transparent);
+        QPainter p(&ball);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setBrush(QColor(40, 40, 48));
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(QRectF(10, 10, 120, 120));
+        p.end();
+        balls.push_back(engine.addImageLayer(ball, QStringLiteral("Ball %1").arg(k + 1), QPoint(130 + k * 250, 330)));
+    }
+    engine.removeLayer(empty);
+    engine.setActiveLayer(balls.last());
+    window.showForScreenshot(QStringLiteral("main"));
+    settle();
+    window.setAnimationAssist(true);
+    settle();
+    TimelineBar* timeline = window.timeline();
+    FrameStrip* strip = timeline ? timeline->strip() : nullptr;
+    const bool shown = timeline && timeline->isVisible() && strip && engine.frames().size() == 4 && engine.currentFrame() == 3;
+    // The ball before shows as an onion skin, tinted red; the one two back fainter still.
+    const QColor before = engine.pickColor(QPoint(130 + 2 * 250 + 70, 400)), twoBack = engine.pickColor(QPoint(130 + 1 * 250 + 70, 400));
+    const bool onion = before.isValid() && before.red() > before.green() + 40 && twoBack.isValid() && twoBack.lightness() > before.lightness();
+    check(QStringLiteral("Animation Assist: the timeline shows 4 frames; the ball before is an onion skin in red (%1), the one before that fainter (%2)")
+              .arg(before.name(), twoBack.name()),
+          shown && onion);
+    if (!shown)
+        return false;
+    capture(QStringLiteral("animation"));
+
+    // A tap on a frame makes it the current one; + adds one after it, as one undo step.
+    penTap(strip, strip->cellRect(0).center());
+    const bool tapped = engine.currentFrame() == 0 && engine.activeLayerId() == balls[0];
+    auto* add = window.findChild<QWidget*>(QStringLiteral("timeline-add"));
+    penTap(add, QPointF(add->width() / 2.0, add->height() / 2.0));
+    const bool added = engine.frames().size() == 5 && engine.currentFrame() == 1;
+    engine.undo();
+    settle();
+    check(QStringLiteral("a tap on the first frame works on it; + puts a new frame after it, and undo takes it out again"),
+          tapped && added && engine.frames().size() == 4);
+
+    // Play: the frames go by on their own; a second tap stops on the frame being worked on.
+    auto* play = window.findChild<QWidget*>(QStringLiteral("timeline-play"));
+    penTap(play, QPointF(play->width() / 2.0, play->height() / 2.0));
+    QSet<int> seen;
+    for (int i = 0; i < 30; ++i) {
+        pause(20);
+        seen.insert(engine.playbackFrame());
+    }
+    const bool playing = timeline->playing() && seen.size() >= 3 && !seen.contains(-1);
+    penTap(play, QPointF(play->width() / 2.0, play->height() / 2.0));
+    check(QStringLiteral("play shows the frames in turn (%1 different in 0.6 s at 12 a second); a second tap stops").arg(seen.size()),
+          playing && !timeline->playing() && engine.playbackFrame() == -1);
+
+    // Settings open above the bar; the frame rate set there is the document's.
+    auto* settingsBtn = window.findChild<QWidget*>(QStringLiteral("timeline-settings"));
+    penTap(settingsBtn, QPointF(settingsBtn->width() / 2.0, settingsBtn->height() / 2.0));
+    auto* settingsPop = window.findChild<Popover*>(QStringLiteral("timeline-settings-popover"));
+    auto* fps = window.findChild<Slider*>(QStringLiteral("animation-fps"));
+    bool settingsOk = settingsPop && settingsPop->isVisible() && settingsPop->geometry().bottom() <= timeline->geometry().top() + 20 && fps;   // its shadow may overlap
+    if (settingsOk) {
+        const QPointF knob(10 + (fps->width() - 20) * fps->value(), fps->height() / 2.0);
+        const QPointF to(10 + (fps->width() - 20) * (23.0 / 59.0), fps->height() / 2.0);
+        penTap(fps, to);
+        settingsOk = engine.animation().fps == 24;
+        Q_UNUSED(knob);
+        capture(QStringLiteral("animation-settings"));
+        settingsPop->dismiss();
+    }
+    if (!settingsOk)
+        log << QStringLiteral("       panel %1, shown %2, bottom %3 vs timeline top %4, slider %5")
+                   .arg(settingsPop != nullptr).arg(settingsPop && settingsPop->isVisible()).arg(settingsPop ? settingsPop->geometry().bottom() : -1)
+                   .arg(timeline->geometry().top()).arg(fps != nullptr);
+    check(QStringLiteral("Settings opens above the timeline; a tap along the frame rate slider sets %1 frames a second").arg(engine.animation().fps), settingsOk);
+
+    // A tap on the frame being worked on opens its options: hold it longer.
+    penTap(strip, strip->cellRect(0).center());
+    auto* framePop = window.findChild<Popover*>(QStringLiteral("frame-options-popover"));
+    bool holdOk = framePop && framePop->isVisible();
+    if (holdOk) {
+        auto* more = framePop->findChild<QWidget*>(QStringLiteral("frame-hold-more"));
+        penTap(more, QPointF(more->width() / 2.0, more->height() / 2.0));
+        holdOk = engine.layerInfo(balls[0]).hold == 2;
+        framePop->dismiss();
+    }
+    check(QStringLiteral("a tap on the current frame opens its options; + holds it for 2 frames"), holdOk);
+
+    // Out as a GIF at half size (the file dialog itself is not driven).
+    const QString gif = outPrefix + QStringLiteral("-animation.gif");
+    QString error;
+    const bool exported = timeline->exportAnimation(TimelineBar::Format::Gif, gif, 0.5, &error);
+    QImageReader reader(gif);
+    check(QStringLiteral("export as an animated GIF at half size: %1 frames of %2 x %3").arg(reader.imageCount()).arg(reader.size().width()).arg(reader.size().height()),
+          exported && reader.imageCount() == 4 && reader.size() == QSize(600, 400));
+
+    window.setAnimationAssist(false);
+    settle();
+    const QImage all = engine.renderImage();
+    check(QStringLiteral("Animation Assist off: the timeline goes and every ball shows again"),
+          !timeline->isVisible() && all.pixelColor(130 + 70, 400).lightness() < 80 && all.pixelColor(130 + 3 * 250 + 70, 400).lightness() < 80);
+    for (const QString& line : log)
+        qInfo().noquote() << "animation:" << line;
+    qInfo().noquote() << "animation:" << (ok ? "ok" : "FAILED");
+    engine.setModified(false);
+    return ok;
+}
+
 int runUiShot(const QString& outPrefix)
 {
     std::signal(SIGTERM, dumpStackAndExit);
@@ -4747,6 +5351,11 @@ int runUiShot(const QString& outPrefix)
             if (w && w != canvas && w->isVisible())
                 w->render(&painter, w->pos(), QRegion(), QWidget::DrawChildren);
         }
+        // A 3D view in a panel: its own picture, with what it paints over the scene.
+        for (QOpenGLWidget* gl : host->findChildren<QOpenGLWidget*>()) {
+            if (gl != canvas && gl->isVisible())
+                painter.drawImage(QRectF(gl->mapTo(host, QPoint(0, 0)), QSizeF(gl->size())), gl->grabFramebuffer());
+        }
         painter.end();
         if (!frame.save(path))
             qCritical().noquote() << "could not write" << path;
@@ -4804,6 +5413,10 @@ int runUiShot(const QString& outPrefix)
         settle();
     };
     auto centre = [](QWidget* w) { return QPointF(w->width() / 2.0, w->height() / 2.0); };
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("animation"))
+        return runAnimationUi(window, engine, penTap, capture, settle, outPrefix) ? 0 : 2;
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("model"))
+        return runModelUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
     {
         QStringList log;
         bool penOk = true;
@@ -7485,6 +8098,8 @@ int runUiShot(const QString& outPrefix)
         qInfo().noquote() << "layered files:" << (layeredOk ? "ok" : "FAILED");
     }
 
+    const bool animationOk = runAnimationUi(window, engine, penTap, capture, settle, outPrefix);
+    const bool modelOk = runModelUi(window, engine, penTap, penWindow, capture, settle);
     engine.setModified(false);
-    return strokesAdded == 2 && shapeOk && pointsOk && penPanelsOk && toolsOk && panelsOk && coloursOk && windowsOk && galleryOk && layeredOk ? 0 : 2;
+    return strokesAdded == 2 && shapeOk && pointsOk && penPanelsOk && toolsOk && panelsOk && coloursOk && windowsOk && galleryOk && layeredOk && animationOk && modelOk ? 0 : 2;
 }

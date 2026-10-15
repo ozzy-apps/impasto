@@ -49,6 +49,7 @@ struct Layer {
     bool isGroup = false;
     int parent = 0;
     bool collapsed = false;  // folded shut in the layer panel
+    int hold = 1;            // as a frame of an animation: how many frames' time it stays up
 
     gfx::Texture& target(bool onMask) { return onMask ? *mask : tex; }
 };
@@ -73,6 +74,23 @@ struct LayerInfo {
     bool collapsed = false;
     bool reference = false;   // fills on other layers follow this one
     bool isText = false;      // still the text that was typed: it can be edited as text
+    int hold = 1;             // as a frame of an animation: how many frames' time it stays up
+};
+
+// An animation in the manner of Procreate's Animation Assist: every top-level
+// layer or group is a frame, bottom to top, and a layer clipped to one goes
+// with it. It is part of the document.
+struct Animation {
+    enum class Playback { Loop = 0, PingPong, OneShot };
+    bool enabled = false;          // the document is an animation: the canvas shows a frame at a time
+    Playback playback = Playback::Loop;
+    int fps = 12;                  // 1..60
+    int onionFrames = 2;           // shown faded on each side of the current frame, 0..12
+    float onionOpacity = 0.5f;     // of the nearest; the farther ones fade further
+    bool tintOnion = true;         // earlier frames red, later frames green
+    bool background = false;       // the first frame stays under every other
+    bool foreground = false;       // the last frame stays over every other
+    bool operator==(const Animation&) const = default;
 };
 
 struct LayerData {
@@ -417,6 +435,26 @@ public:
 
     // ---- drawing guides
     const Guides& guides() const { return m_guides; }
+
+    // ---- animation
+    // While it is enabled the canvas shows the frame the active layer belongs
+    // to, with the frames either side of it faded behind it as onion skins.
+    const Animation& animation() const { return m_anim; }
+    void setAnimation(const Animation& animation);   // marks the document changed; not an undo step
+    QVector<int> frames() const;                     // the ids of the frames, bottom to top
+    int frameOf(int layerId) const;                  // which frame a layer is part of; -1 for none
+    int currentFrame() const { return frameOf(m_activeId); }
+    // Makes a frame the current one: its layer (in a group, the topmost layer in it) becomes the active one.
+    void showFrame(int index);
+    // While playing: that one frame as it plays, without onion skins. -1 goes back to the active layer's.
+    void setPlaybackFrame(int index);
+    int playbackFrame() const { return m_playFrame; }
+    void setFrameHold(int id, int frames);   // an undo step
+    int addFrame();                          // an empty layer, as the frame after the current one
+    // A frame as it plays, the whole canvas: with the background and
+    // foreground frames if they are kept, and without onion skins.
+    QImage renderFrame(int index);
+    QImage frameThumbnail(int index, int maxDim);
     QPointF symmetryCentre() const;   // canvas pixels
     void setGuides(const Guides& guides);
 
@@ -453,6 +491,7 @@ public:
 signals:
     void damaged();
     void guidesChanged();
+    void animationChanged();
     void layersChanged();
     void selectionChanged();
     void documentChanged();
@@ -505,8 +544,13 @@ private:
         const gfx::Texture* clip;
         const gfx::Texture* clipMask;
         bool intoBand = false;   // the target is a band buffer, not something the size of the canvas
+        const float* tint = nullptr;   // an onion skin's colour, and how far it goes (rgb, amount)
     };
     void drawCompositePass(const CompositePass& pass);
+    // The top level of an animation, in the order it is drawn: the background
+    // frame, the onion skins (farthest first), the current frame, the foreground frame.
+    void animationEntries(const std::function<void(const Layer*, bool clipped, float opacity, const float* tint)>& add) const;
+    std::vector<std::vector<const Layer*>> frameParts() const;   // each frame: its layer and the layers clipped to it
     bool isBand(const gfx::Texture* tex) const;
     // `reach`: the only part that needs drawing; everything else comes out as nothing.
     void drawTransform(const gfx::Texture& src, gfx::Texture& target, bool fillWhite, bool throughSelection = true,
@@ -678,6 +722,8 @@ private:
     QHash<quint64, TextInfo> m_texts;   // by the stamp of the pixels that are that text
     int m_textEditId = 0;
     int m_leftOutId = 0;   // a layer kept out of the picture while a reference group is put together
+    Animation m_anim;
+    int m_playFrame = -1;   // the frame shown while playing, or -1
 
     struct JournalStroke {
         StrokeTool tool = StrokeTool::Brush;

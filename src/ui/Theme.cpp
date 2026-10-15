@@ -105,6 +105,11 @@ const QHash<QString, QString>& iconBodies()
         // Sections of the brush lab.
         {QStringLiteral("stroke-path"),
          QStringLiteral("<path d='M5.500 17.500C5.500 9 18.500 15 18.500 6.500'/><circle cx='5.500' cy='18' r='1.500'/><circle cx='18.500' cy='6' r='1.500'/>")},
+        // Playing an animation, the animation itself, and a 3D model to draw from.
+        {QStringLiteral("play"), QStringLiteral("<path d='M8 5.500v13l10.500-6.500z'/>")},
+        {QStringLiteral("pause"), QStringLiteral("<path d='M8.500 5.500v13M15.500 5.500v13'/>")},
+        {QStringLiteral("film"), QStringLiteral("<rect x='3.500' y='5.500' width='17' height='13' rx='2'/><path d='M7.500 5.500v13M16.500 5.500v13M3.500 12h4M16.500 12h4'/>")},
+        {QStringLiteral("cube"), QStringLiteral("<path d='M12 3.500l7.500 4.200v8.600L12 20.500l-7.500-4.200V7.700z'/><path d='M4.500 7.700L12 12l7.500-4.300M12 12v8.500'/>")},
         {QStringLiteral("stabilise"), QStringLiteral("<path d='M3.500 9c1.800-3.500 3.200 3.500 5 0s3.200 3.500 5 0 3.200 3.500 5 0 2 0 2 0'/><path d='M3.500 16.500h17'/>")},
         {QStringLiteral("taper"), QStringLiteral("<path d='M3 12c5.500-3.800 12-3.800 18 0-6 3.800-12.500 3.800-18 0z'/>")},
         {QStringLiteral("tip-shape"),

@@ -18,6 +18,8 @@ class Panel;
 class Popover;
 class ReferencePanel;
 class StabilisePanel;
+class TimelineBar;
+class ModelPanel;
 class ShortcutSheet;
 class QAbstractButton;
 class QLabel;
@@ -42,9 +44,14 @@ public:
     void showGalleryAtStart();   // only if there is something on it, and the artist wants that
     Gallery* gallery() const { return m_gallery; }
     ReferencePanel* referencePanel() const { return m_refPanel; }
+    ModelPanel* modelPanel() const { return m_modelPanel; }
     // Everything about the current brush, over the whole window, with a pad to try it on.
     void showBrushLab();
     BrushLab* brushLab() const { return m_brushLab; }
+
+    // Animation Assist: the canvas shows a frame at a time, with the timeline along the bottom.
+    void setAnimationAssist(bool on);
+    TimelineBar* timeline() const { return m_timeline; }
 
     // Text: set in a font and put on a layer of its own, then handed to the
     // transform tool to be placed. Once placed it is pixels like any other.
@@ -140,6 +147,7 @@ private:
     IconButton* m_transformBtn = nullptr;
     IconButton* m_guidesBtn = nullptr;
     IconButton* m_steadyBtn = nullptr;
+    IconButton* m_modelBtn = nullptr;
     IconButton* m_selectBtn = nullptr;
     IconButton* m_toolBtn[3] = {nullptr, nullptr, nullptr};
     IconButton* m_layersBtn = nullptr;
@@ -155,8 +163,12 @@ private:
     Popover* m_colorPop = nullptr;
     Popover* m_refPop = nullptr;
     Popover* m_steadyPop = nullptr;
+    Popover* m_modelPop = nullptr;
+    ModelPanel* m_modelPanel = nullptr;
     ReferencePanel* m_refPanel = nullptr;
     StabilisePanel* m_steadyPanel = nullptr;
+    TimelineBar* m_timeline = nullptr;
+    void syncTimeline();
     IconButton* m_refBtn = nullptr;
     QWidget* anchorOf(Popover* popover) const;
     BrushPanel* m_brushPanel = nullptr;

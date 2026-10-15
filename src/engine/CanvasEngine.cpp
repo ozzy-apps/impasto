@@ -406,6 +406,8 @@ void CanvasEngine::allocate(const QSize& size)
     m_referenceId = 0;
     m_resolution = 0;
     m_guides = {};
+    m_anim = {};
+    m_playFrame = -1;
     m_maskEditing = false;
     m_texts.clear();
     m_textEditId = 0;
@@ -599,6 +601,7 @@ void CanvasEngine::loadDocument(const QSize& size, const QColor& background, boo
         layer->alphaLock = d.info.alphaLock;
         layer->clipping = d.info.clipping;
         layer->collapsed = d.info.collapsed;
+        layer->hold = std::clamp(d.info.hold, 1, 99);
         const QRect r = d.rect & canvasRect();
         if (!layer->isGroup && !r.isEmpty() && r == d.rect) {
             layer->tex.uploadHalf(r, d.pixels);
@@ -778,6 +781,7 @@ LayerInfo CanvasEngine::infoOf(const Layer& l) const
     i.collapsed = l.collapsed;
     i.reference = l.id == m_referenceId;
     i.isText = !l.isGroup && m_texts.contains(l.stamp);
+    i.hold = l.hold;
     return i;
 }
 
@@ -831,6 +835,7 @@ LayerPtr CanvasEngine::cloneLayer(const Layer& src)
     copy->alphaLock = src.alphaLock;
     copy->clipping = src.clipping;
     copy->collapsed = src.collapsed;
+    copy->hold = src.hold;
     copy->maskEnabled = src.maskEnabled;
     copy->parent = src.parent;
     if (!src.isGroup)
@@ -919,9 +924,12 @@ void CanvasEngine::setActiveLayer(int id)
 {
     if (id == m_activeId || !find(id) || busy())
         return;
+    const int frameWas = m_anim.enabled ? currentFrame() : -1;
     m_activeId = id;
     m_maskEditing = false;
     m_history.breakMerge();
+    if (m_anim.enabled && currentFrame() != frameWas)
+        damageAll();   // another frame comes into view
     emit layersChanged();
 }
 
@@ -1245,6 +1253,7 @@ void CanvasEngine::applyProps(Layer& l, const LayerInfo& p)
     l.blend = p.blend;
     l.alphaLock = p.alphaLock;
     l.clipping = p.clipping;
+    l.hold = p.hold;
     damageAll();
     emit layersChanged();
 }
@@ -1283,6 +1292,204 @@ void CanvasEngine::setLayerOpacity(int id, float opacity)
 void CanvasEngine::setLayerBlend(int id, BlendMode mode)
 {
     changeProps(id, [&](LayerInfo& i) { i.blend = mode; }, tr("Blend Mode"), QStringLiteral("blend"));
+}
+
+// ------------------------------------------------------------- animation
+
+std::vector<std::vector<const Layer*>> CanvasEngine::frameParts() const
+{
+    std::vector<std::vector<const Layer*>> frames;
+    for (const LayerPtr& lp : m_layers) {
+        if (lp->parent != 0)
+            continue;
+        if (lp->clipping && !lp->isGroup && !frames.empty())
+            frames.back().push_back(lp.get());
+        else
+            frames.push_back({lp.get()});
+    }
+    return frames;
+}
+
+QVector<int> CanvasEngine::frames() const
+{
+    QVector<int> ids;
+    for (const auto& parts : frameParts())
+        ids.push_back(parts.front()->id);
+    return ids;
+}
+
+int CanvasEngine::frameOf(int layerId) const
+{
+    LayerPtr l = find(layerId);
+    while (l && l->parent != 0)
+        l = find(l->parent);
+    if (!l)
+        return -1;
+    const auto frames = frameParts();
+    for (size_t k = 0; k < frames.size(); ++k) {
+        for (const Layer* part : frames[k]) {
+            if (part == l.get())
+                return int(k);
+        }
+    }
+    return -1;
+}
+
+void CanvasEngine::animationEntries(const std::function<void(const Layer*, bool, float, const float*)>& add) const
+{
+    // Earlier frames go red, later ones green, as most animation software has it.
+    static const float before[4] = {0.93f, 0.18f, 0.20f, 0.85f}, after[4] = {0.15f, 0.72f, 0.30f, 0.85f};
+    const auto frames = frameParts();
+    const int n = int(frames.size());
+    if (n == 0)
+        return;
+    const int current = std::clamp(m_playFrame >= 0 ? m_playFrame : currentFrame(), 0, n - 1);
+    auto frame = [&](int k, float times, const float* tint) {
+        const Layer* base = frames[size_t(k)].front();
+        if (!base->visible || base->opacity <= 0.0f || base->id == m_textEditId)
+            return;
+        add(base, false, base->opacity * times, tint);
+        for (size_t j = 1; j < frames[size_t(k)].size(); ++j) {
+            const Layer* c = frames[size_t(k)][j];
+            if (c->visible && c->opacity > 0.0f && c->id != m_textEditId)
+                add(c, true, c->opacity * base->opacity * times, tint);
+        }
+    };
+    const bool background = m_anim.background && current != 0;
+    const bool foreground = m_anim.foreground && n > 1 && current != n - 1;
+    if (background)
+        frame(0, 1.0f, nullptr);
+    if (m_playFrame < 0) {
+        const int reach = std::clamp(m_anim.onionFrames, 0, 12);
+        for (int d = reach; d >= 1; --d) {
+            // The nearest at the opacity chosen, each one further out fainter.
+            const float times = std::clamp(m_anim.onionOpacity, 0.0f, 1.0f) * float(reach + 1 - d) / float(reach);
+            for (const int k : {current - d, current + d}) {
+                if (k < 0 || k >= n || (background && k == 0) || (foreground && k == n - 1))
+                    continue;
+                frame(k, times, m_anim.tintOnion ? (k < current ? before : after) : nullptr);
+            }
+        }
+    }
+    frame(current, 1.0f, nullptr);
+    if (foreground)
+        frame(n - 1, 1.0f, nullptr);
+}
+
+void CanvasEngine::setAnimation(const Animation& animation)
+{
+    Animation a = animation;
+    a.fps = std::clamp(a.fps, 1, 60);
+    a.onionFrames = std::clamp(a.onionFrames, 0, 12);
+    a.onionOpacity = std::clamp(a.onionOpacity, 0.0f, 1.0f);
+    if (a == m_anim)
+        return;
+    m_anim = a;
+    if (!a.enabled)
+        m_playFrame = -1;
+    damageAll();
+    setModified(true);
+    emit animationChanged();
+}
+
+void CanvasEngine::showFrame(int index)
+{
+    const auto frames = frameParts();
+    if (index < 0 || index >= int(frames.size()))
+        return;
+    // A group's frame is worked on in its topmost layer.
+    const Layer* base = frames[size_t(index)].front();
+    int id = base->id;
+    if (base->isGroup) {
+        for (auto it = m_layers.rbegin(); it != m_layers.rend(); ++it) {
+            const Layer& l = **it;
+            if (l.isGroup)
+                continue;
+            LayerPtr up = find(l.parent);
+            while (up && up->id != base->id)
+                up = find(up->parent);
+            if (up) {
+                id = l.id;
+                break;
+            }
+        }
+    }
+    setActiveLayer(id);
+}
+
+void CanvasEngine::setPlaybackFrame(int index)
+{
+    if (index == m_playFrame)
+        return;
+    m_playFrame = index;
+    if (m_anim.enabled)
+        damageAll();
+}
+
+void CanvasEngine::setFrameHold(int id, int frames)
+{
+    changeProps(id, [&](LayerInfo& i) { i.hold = std::clamp(frames, 1, 99); }, tr("Frame Hold"), {});
+}
+
+int CanvasEngine::addFrame()
+{
+    if (!hasDocument() || busy())
+        return 0;
+    Scope s(this);
+    const Structure before = captureStructure();
+    LayerPtr layer = createLayer(nextLayerName());
+    layer->parent = 0;
+    // Straight after the current frame and whatever is clipped to it, or on top when there is none.
+    size_t at = m_layers.size();
+    const int current = currentFrame();
+    const auto frames = frameParts();
+    if (current >= 0 && current + 1 < int(frames.size()))
+        at = size_t(indexOf(frames[size_t(current) + 1].front()->id));
+    m_layers.insert(m_layers.begin() + std::ptrdiff_t(at), layer);
+    m_activeId = layer->id;
+    m_maskEditing = false;
+    pushStructure(tr("Add Frame"), before);
+    if (m_anim.enabled)
+        damageAll();
+    return layer->id;
+}
+
+QImage CanvasEngine::renderFrame(int index)
+{
+    if (!hasDocument())
+        return {};
+    Scope s(this);
+    const int was = m_playFrame;
+    const bool wasEnabled = m_anim.enabled;
+    m_anim.enabled = true;
+    m_playFrame = std::max(0, index);
+    damageAll();
+    prepareFrame(false);
+    const QImage image = m_result.readback(canvasRect());
+    m_anim.enabled = wasEnabled;
+    m_playFrame = was;
+    damageAll();
+    return image;
+}
+
+QImage CanvasEngine::frameThumbnail(int index, int maxDim)
+{
+    const auto frames = frameParts();
+    if (index < 0 || index >= int(frames.size()))
+        return {};
+    const Layer* base = frames[size_t(index)].front();
+    if (!base->isGroup && frames[size_t(index)].size() == 1)
+        return layerThumbnail(base->id, maxDim);
+    // A group, or a layer with others clipped to it: the frame as it plays, without the paper.
+    const bool paper = m_backgroundVisible;
+    const Animation keep = m_anim;
+    m_backgroundVisible = false;
+    m_anim.background = m_anim.foreground = false;
+    QImage image = renderFrame(index);
+    m_backgroundVisible = paper;
+    m_anim = keep;
+    damageAll();
+    return image.scaled(QSize(maxDim, maxDim), Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
 void CanvasEngine::setLayerAlphaLock(int id, bool locked)
@@ -1557,6 +1764,10 @@ void CanvasEngine::drawCompositePass(const CompositePass& p)
     m_compositeProg.set("uHasClipMask", p.clip && p.clipMask ? 1 : 0);
     m_compositeProg.set("uOpacity", p.opacity);
     m_compositeProg.set("uMode", p.mode);
+    if (p.tint)
+        m_compositeProg.set("uTint", p.tint[0], p.tint[1], p.tint[2], p.tint[3]);
+    else
+        m_compositeProg.set("uTint", 0.0f, 0.0f, 0.0f, 0.0f);
     // A fragment's place in the target, and from there in each texture.
     const QPoint target = p.intoBand ? m_bandOrigin : QPoint(0, 0);
     auto place = [&](const char* name, const gfx::Texture* tex) {
@@ -3862,23 +4073,28 @@ const gfx::Texture* CanvasEngine::compositeLevel(int parentId, int level, const 
         const Layer* layer;
         bool clipped;
         float opacity;
+        const float* tint = nullptr;
     };
     std::vector<Entry> entries;
-    const Layer* base = nullptr;
-    bool baseShown = false;
-    for (const LayerPtr& lp : m_layers) {
-        const Layer& l = *lp;
-        if (l.parent != parentId)
-            continue;
-        const bool shown = l.visible && l.opacity > 0.0f && l.id != m_textEditId && l.id != m_leftOutId;
-        // A layer clips to the nearest unclipped one below it in the same group.
-        if (!l.clipping || l.isGroup || !base) {
-            base = &l;
-            baseShown = shown;
-            if (shown)
-                entries.push_back({&l, false, l.opacity});
-        } else if (baseShown && shown) {
-            entries.push_back({&l, true, l.opacity * base->opacity});
+    if (level == 0 && m_anim.enabled) {
+        animationEntries([&](const Layer* l, bool clipped, float opacity, const float* tint) { entries.push_back({l, clipped, opacity, tint}); });
+    } else {
+        const Layer* base = nullptr;
+        bool baseShown = false;
+        for (const LayerPtr& lp : m_layers) {
+            const Layer& l = *lp;
+            if (l.parent != parentId)
+                continue;
+            const bool shown = l.visible && l.opacity > 0.0f && l.id != m_textEditId && l.id != m_leftOutId;
+            // A layer clips to the nearest unclipped one below it in the same group.
+            if (!l.clipping || l.isGroup || !base) {
+                base = &l;
+                baseShown = shown;
+                if (shown)
+                    entries.push_back({&l, false, l.opacity});
+            } else if (baseShown && shown) {
+                entries.push_back({&l, true, l.opacity * base->opacity});
+            }
         }
     }
 
@@ -3931,7 +4147,7 @@ const gfx::Texture* CanvasEngine::compositeLevel(int parentId, int level, const 
         else
             f->glScissor(band.x(), band.y(), band.width(), band.height());
         drawCompositePass({previous, level == 0 ? background : clear, src, opacity, int(l.blend), mask,
-                           entries[i].clipped ? baseTex : nullptr, entries[i].clipped ? baseMask : nullptr, intoBand});
+                           entries[i].clipped ? baseTex : nullptr, entries[i].clipped ? baseMask : nullptr, intoBand, entries[i].tint});
         previous = &target;
         if (!entries[i].clipped) {
             baseTex = src;
@@ -4000,6 +4216,9 @@ QImage CanvasEngine::renderImage()
 {
     if (!hasDocument())
         return {};
+    // An animation's picture is the frame being worked on, as it plays: onion skins are only a guide.
+    if (m_anim.enabled && m_playFrame < 0)
+        return renderFrame(currentFrame());
     Scope s(this);
     prepareFrame(false);
     return m_result.readback(canvasRect());
@@ -4010,8 +4229,18 @@ QByteArray CanvasEngine::compositePixels()
     if (!hasDocument())
         return {};
     Scope s(this);
+    const int was = m_playFrame;
+    if (m_anim.enabled && m_playFrame < 0) {
+        m_playFrame = std::max(0, currentFrame());
+        damageAll();
+    }
     prepareFrame(false);
-    return m_result.readbackHalf(canvasRect());
+    QByteArray pixels = m_result.readbackHalf(canvasRect());
+    if (m_playFrame != was) {
+        m_playFrame = was;
+        damageAll();
+    }
+    return pixels;
 }
 
 QColor CanvasEngine::pickColor(const QPoint& canvasPos)
