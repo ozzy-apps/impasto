@@ -62,9 +62,13 @@ For the next AI: no further implementation is required for this Windows build. H
 - Windows full engine and UI suites returned 0. Portable image-plugin checks, Unicode/spaces PSD import, install/installed-app/uninstall, and artwork preservation passed. The unchanged baseline reproduces the separate Linux 3D "Keep" UI assertion noted above.
 - All requested local build work is complete. Future hardware validation is listed under Remaining release follow-up.
 
-## Step 6 — repository publication
+## Step 6 — repository publication complete
 - The user requested pushing the Windows port to `https://github.com/ozzy-apps/impasto`.
-- `origin/main` was fetched and matched local `main` at `227050c` before publication; no merge or rebase was needed.
-- `git diff --check` and all three delivery SHA-256 checks passed. The engine/UI/package validation from Step 5 remains applicable; no application code was changed in this publication step.
-- Commit the reviewed source and Windows packaging on `main`, then push to `origin`. Build artifacts stay excluded from Git under `dist/`.
-- Prepare a draft `v0.11.1` GitHub release containing the Windows installer, portable ZIP, source archive, and checksum files. Keep the existing published `v0.9.0` release intact. Native Windows hardware validation and signing remain future release work.
+- Fetched `origin/main`, which matched local `main` at `227050c`; no merge or rebase was needed.
+- Committed the Windows port as `ced2b09f6dba7cd08cd70342b6a81c77f80d65c6` (`Add Windows x64 builds and installer packaging`) and pushed it to `origin/main`.
+- Application/build files pass the staged whitespace check. Third-party license notices retain their upstream formatting. The engine/UI/package validation from Step 5 remains applicable; no application code changed during publication.
+- Created the draft `v0.11.1` release (GitHub release ID `419162909`), targeting the exact port commit. The existing published `v0.9.0` release remains intact.
+- Draft release: https://github.com/ozzy-apps/impasto/releases/tag/untagged-b589f506391227dfef54
+- Uploaded the Windows installer, portable ZIP, source archive, three individual SHA-256 files, and `SHA256SUMS-Windows.txt`. All seven uploaded assets have server-reported SHA-256 digests matching the local files.
+- Verification receipt: `dist/windows-verification/github-draft-release.json`. Build artifacts remain excluded from Git under `dist/`.
+- The draft remains unpublished. Future release work consists of native Windows hardware validation, optional signing, and publishing the draft when requested. The source archive preserves the tested build snapshot; its embedded handoff predates this publication step.
