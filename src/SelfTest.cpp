@@ -74,10 +74,14 @@
 #include <QPainterPath>
 #include <QPlainTextEdit>
 #include <cmath>
+#include <numbers>
 #include <functional>
 #include <csignal>
+#include <cstdlib>
+#if defined(Q_OS_LINUX)
 #include <execinfo.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -252,9 +256,9 @@ std::vector<QPointF> resting(std::vector<QPointF> stroke, double wander, quint32
         at += QPointF(next(), next()) * (wander * 0.8);
         // Never far from where it came to rest.
         const QPointF off = at - home;
-        const double far = std::hypot(off.x(), off.y());
-        if (far > wander)
-            at = home + off * (wander / far);
+        const double farthest = std::hypot(off.x(), off.y());
+        if (farthest > wander)
+            at = home + off * (wander / farthest);
         stroke.push_back(at);
     }
     return stroke;
@@ -561,7 +565,7 @@ int runShapeTests()
 
 // ---- selections, fill, clipboard and alpha-locked smudge, checked on pixels
 
-bool near(const QColor& c, int r, int g, int b, int tol = 3)
+bool nearby(const QColor& c, int r, int g, int b, int tol = 3)
 {
     return std::abs(c.red() - r) <= tol && std::abs(c.green() - g) <= tol && std::abs(c.blue() - b) <= tol;
 }
@@ -587,17 +591,17 @@ bool runEditingTests(CanvasEngine& engine)
     box.addRect(1400, 1100, 200, 120);
     engine.setSelection(box, QStringLiteral("Select"));
     engine.fillLayer(layer, QColor(200, 30, 30));
-    check("fill stays inside the selection", near(at(1500, 1160), 200, 30, 30) && at(1380, 1160) == before.pixelColor(1380, 1160));
+    check("fill stays inside the selection", nearby(at(1500, 1160), 200, 30, 30) && at(1380, 1160) == before.pixelColor(1380, 1160));
     wave(engine, StrokeTool::Brush, round, 120, 1.0f, QColor(20, 60, 220), QPointF(1300, 1160), QPointF(1700, 1160), 0);
     check("brush stroke stays inside the selection",
-          near(at(1500, 1160), 20, 60, 220, 6) && at(1650, 1160) == before.pixelColor(1650, 1160));
+          nearby(at(1500, 1160), 20, 60, 220, 6) && at(1650, 1160) == before.pixelColor(1650, 1160));
 
     // Inverting flips what is protected; clearing only removes what is selected.
     engine.invertSelection();
     engine.fillLayer(layer, QColor(30, 160, 60));
-    check("inverted selection fills the outside", near(at(1700, 1250), 30, 160, 60) && near(at(1500, 1160), 20, 60, 220, 6));
+    check("inverted selection fills the outside", nearby(at(1700, 1250), 30, 160, 60) && nearby(at(1500, 1160), 20, 60, 220, 6));
     engine.clearLayer(layer);
-    check("clear removes only the selected part", at(1700, 1250) == paper && near(at(1500, 1160), 20, 60, 220, 6));
+    check("clear removes only the selected part", at(1700, 1250) == paper && nearby(at(1500, 1160), 20, 60, 220, 6));
 
     // Moving a selection takes its pixels and its outline along.
     engine.invertSelection();
@@ -607,7 +611,7 @@ bool runEditingTests(CanvasEngine& engine)
     engine.setTransform(shift);
     engine.commitEdit();
     check("transform moves the selected pixels and the outline",
-          began && near(at(1320, 1160), 20, 60, 220, 6) && at(1590, 1160) == before.pixelColor(1590, 1160)
+          began && nearby(at(1320, 1160), 20, 60, 220, 6) && at(1590, 1160) == before.pixelColor(1590, 1160)
               && std::abs(engine.selectionBounds().left() - 1220) <= 1);
 
     // Copy gives back exactly the selected rectangle; pasting it lands in place.
@@ -616,7 +620,7 @@ bool runEditingTests(CanvasEngine& engine)
     engine.clearSelection();
     const int pasted = engine.addImageLayer(copied, QStringLiteral("Pasted"), origin + QPoint(0, -110));
     check("copy and paste", copied.size() == QSize(200, 120) && origin == QPoint(1220, 1100) && pasted != 0
-                                && near(at(1320, 1050), 20, 60, 220, 6));
+                                && nearby(at(1320, 1050), 20, 60, 220, 6));
     engine.removeLayer(pasted);
     engine.setActiveLayer(layer);
 
@@ -630,7 +634,7 @@ bool runEditingTests(CanvasEngine& engine)
     engine.clearSelection();
     const bool filled = engine.floodFill(QPoint(1550, 1120), QColor(250, 200, 20), 0.12f);
     check("flood fill is contained by an outline",
-          filled && near(at(1550, 1120), 250, 200, 20) && near(at(1460, 1120), 10, 10, 10) && at(1700, 1250) == paper);
+          filled && nearby(at(1550, 1120), 250, 200, 20) && nearby(at(1460, 1120), 10, 10, 10) && at(1700, 1250) == paper);
 
     // Smudging on an alpha-locked layer must leave every alpha value alone.
     engine.setLayerAlphaLock(layer, true);
@@ -691,17 +695,17 @@ bool runMaskAndGroupTests(CanvasEngine& engine, const QString& docPath)
     const QByteArray pixels = engine.layerPixels(red);
     wave(engine, StrokeTool::Brush, round, 80, 1.0f, Qt::black, QPointF(1300, 1150), QPointF(1700, 1150), 0);
     check("black on the mask hides the layer without touching its pixels",
-          at(1500, 1150) == before.pixelColor(1500, 1150) && near(at(1500, 1050), 200, 30, 30) && engine.layerPixels(red) == pixels);
+          at(1500, 1150) == before.pixelColor(1500, 1150) && nearby(at(1500, 1050), 200, 30, 30) && engine.layerPixels(red) == pixels);
     wave(engine, StrokeTool::Eraser, round, 80, 1.0f, Qt::black, QPointF(1300, 1150), QPointF(1500, 1150), 0);
-    check("the eraser reveals again", near(at(1400, 1150), 200, 30, 30) && at(1620, 1150) == before.pixelColor(1620, 1150));
+    check("the eraser reveals again", nearby(at(1400, 1150), 200, 30, 30) && at(1620, 1150) == before.pixelColor(1620, 1150));
     engine.setLayerMaskEnabled(red, false);
-    const bool disabledShows = near(at(1620, 1150), 200, 30, 30);
+    const bool disabledShows = nearby(at(1620, 1150), 200, 30, 30);
     engine.setLayerMaskEnabled(red, true);
     check("a disabled mask is ignored", disabledShows && at(1620, 1150) == before.pixelColor(1620, 1150));
     engine.invertLayerMask(red);
-    const bool inverted = near(at(1620, 1150), 200, 30, 30) && at(1500, 1050) == before.pixelColor(1500, 1050);
+    const bool inverted = nearby(at(1620, 1150), 200, 30, 30) && at(1500, 1050) == before.pixelColor(1500, 1050);
     engine.invertLayerMask(red);
-    check("inverting swaps hidden and shown", inverted && near(at(1500, 1050), 200, 30, 30));
+    check("inverting swaps hidden and shown", inverted && nearby(at(1500, 1050), 200, 30, 30));
 
     // Moving the layer takes its mask along; what comes in from outside is shown.
     engine.setMaskEditing(false);
@@ -711,7 +715,7 @@ bool runMaskAndGroupTests(CanvasEngine& engine, const QString& docPath)
     engine.setTransform(up);
     engine.commitEdit();
     check("a transform moves the mask with the layer",
-          at(1620, 1050) == before.pixelColor(1620, 1050) && near(at(1620, 1150), 200, 30, 30));
+          at(1620, 1050) == before.pixelColor(1620, 1050) && nearby(at(1620, 1150), 200, 30, 30));
 
     const QImage masked = engine.renderImage();
     engine.applyLayerMask(red);
@@ -727,7 +731,7 @@ bool runMaskAndGroupTests(CanvasEngine& engine, const QString& docPath)
     engine.clearSelection();
     engine.setMaskEditing(false);
     check("a mask made from a selection shows only what was selected",
-          near(at(1500, 1150), 20, 60, 220) && !near(at(1350, 1100), 20, 60, 220));
+          nearby(at(1500, 1150), 20, 60, 220) && !nearby(at(1350, 1100), 20, 60, 220));
 
     // ---- groups
     const QImage loose = engine.renderImage();
@@ -742,7 +746,7 @@ bool runMaskAndGroupTests(CanvasEngine& engine, const QString& docPath)
     const QColor under = before.pixelColor(1500, 1150);
     const QColor faded = at(1500, 1150);
     check("a group's opacity applies to the group as a whole",
-          near(faded, (under.red() + 20) / 2, (under.green() + 60) / 2, (under.blue() + 220) / 2, 3));
+          nearby(faded, (under.red() + 20) / 2, (under.green() + 60) / 2, (under.blue() + 220) / 2, 3));
     engine.setLayerVisible(group, false);
     const bool hidden = engine.renderImage() == before;
     engine.setLayerVisible(group, true);
@@ -911,20 +915,20 @@ bool runFloodAndSelectionTests(CanvasEngine& engine, const QString& docPath)
     const int beforeSession = undoCount();
     const QColor green(30, 160, 60);
     engine.beginFlood(FloodKind::Fill, QPoint(200, 200), 0.05f, green);
-    const bool narrow = near(at(200, 200), 30, 160, 60) && near(at(400, 200), 130, 130, 130);
+    const bool narrow = nearby(at(200, 200), 30, 160, 60) && nearby(at(400, 200), 130, 130, 130);
     engine.setFloodTolerance(0.2f);
-    const bool wide = near(at(200, 200), 30, 160, 60) && near(at(400, 200), 30, 160, 60);
+    const bool wide = nearby(at(200, 200), 30, 160, 60) && nearby(at(400, 200), 30, 160, 60);
     engine.setFloodTolerance(0.05f);
-    const bool narrowAgain = near(at(400, 200), 130, 130, 130);
+    const bool narrowAgain = nearby(at(400, 200), 130, 130, 130);
     engine.cancelFlood();
-    const bool cancelled = near(at(200, 200), 100, 100, 100) && undoCount() == beforeSession;
+    const bool cancelled = nearby(at(200, 200), 100, 100, 100) && undoCount() == beforeSession;
     engine.beginFlood(FloodKind::Fill, QPoint(200, 200), 0.05f, green);
     engine.setFloodTolerance(0.2f);
     engine.endFlood();
-    const bool kept = near(at(200, 200), 30, 160, 60) && near(at(400, 200), 30, 160, 60) && undoCount() == beforeSession + 1;
+    const bool kept = nearby(at(200, 200), 30, 160, 60) && nearby(at(400, 200), 30, 160, 60) && undoCount() == beforeSession + 1;
     engine.undo(true);
     check(QStringLiteral("a fill spreads and shrinks with its threshold before it is let go; cancel leaves nothing"),
-          narrow && wide && narrowAgain && cancelled && kept && near(at(400, 200), 130, 130, 130));
+          narrow && wide && narrowAgain && cancelled && kept && nearby(at(400, 200), 130, 130, 130));
 
     // ---- soft edges
     engine.setSelection(rect(400, 300, 400, 300), QStringLiteral("Select"));
@@ -1344,23 +1348,23 @@ bool runGuideTests(CanvasEngine& engine, const QString& docPath)
     Guides guides;
 
     wave(engine, StrokeTool::Brush, pen, 30, 1.0f, Qt::black, QPointF(120, 200), QPointF(420, 330), 40);
-    int near = 0, far = 0;
-    compare(alphas(), true, false, &near, &far);
-    const bool plain = near > 2000 && far == 0;
+    int nearby = 0, farthest = 0;
+    compare(alphas(), true, false, &nearby, &farthest);
+    const bool plain = nearby > 2000 && farthest == 0;
     engine.undo(true);
 
     guides.symmetry = Guides::Symmetry::Vertical;
     engine.setGuides(guides);
     const int before = engine.history().undoCount();
     wave(engine, StrokeTool::Brush, pen, 30, 1.0f, Qt::black, QPointF(120, 200), QPointF(420, 330), 40);
-    const float offVertical = compare(alphas(), true, false, &near, &far);
+    const float offVertical = compare(alphas(), true, false, &nearby, &farthest);
     const bool oneStep = engine.history().undoCount() == before + 1;
     check(QStringLiteral("vertical symmetry: a stroke on the left appears mirrored on the right (%1 px each side, worst mismatch %2)")
-              .arg(near).arg(offVertical, 0, 'f', 3),
-          plain && near > 2000 && far == near && offVertical < 0.02f && oneStep);
+              .arg(nearby).arg(offVertical, 0, 'f', 3),
+          plain && nearby > 2000 && farthest == nearby && offVertical < 0.02f && oneStep);
     engine.undo(true);
-    compare(alphas(), true, false, &near, &far);
-    check(QStringLiteral("it is one stroke: one undo takes both halves away"), near == 0 && far == 0);
+    compare(alphas(), true, false, &nearby, &farthest);
+    check(QStringLiteral("it is one stroke: one undo takes both halves away"), nearby == 0 && farthest == 0);
 
     guides.symmetry = Guides::Symmetry::Quadrant;
     engine.setGuides(guides);
@@ -1377,7 +1381,7 @@ bool runGuideTests(CanvasEngine& engine, const QString& docPath)
     engine.fillLayer(layer, QColor(40, 90, 200));
     wave(engine, StrokeTool::Eraser, hard, 60, 1.0f, Qt::black, QPointF(200, 150), QPointF(800, 250), 20);
     const std::vector<float> holed = alphas();
-    const float offErase = compare(holed, false, true, &near, &far);
+    const float offErase = compare(holed, false, true, &nearby, &farthest);
     check(QStringLiteral("horizontal symmetry applies to the eraser too"),
           offErase < 0.02f && holed[size_t(200) * W + 500] < 0.05f && holed[size_t(H - 1 - 200) * W + 500] < 0.05f
               && holed[size_t(400) * W + 500] > 0.99f);
@@ -1481,8 +1485,8 @@ bool runGuideTests(CanvasEngine& engine, const QString& docPath)
         engine.setGuides(guides);
         wave(engine, StrokeTool::Brush, pen, 30, 1.0f, Qt::black, QPointF(120, 200), QPointF(420, 330), 40);
         const std::vector<float> a = alphas();
-        const float halfTurn = compare(a, true, true, &near, &far);
-        const float mirror = compare(a, true, false, &near, &far);
+        const float halfTurn = compare(a, true, true, &nearby, &farthest);
+        const float mirror = compare(a, true, false, &nearby, &farthest);
         engine.undo(true);
         guides.symmetry = Guides::Symmetry::Quadrant;
         engine.setGuides(guides);
@@ -1544,7 +1548,7 @@ bool runGuideTests(CanvasEngine& engine, const QString& docPath)
         const int stepsBefore = engine.history().undoCount();
         wave(engine, StrokeTool::Smudge, hard, 70, 1.0f, Qt::black, QPointF(300, 400), QPointF(150, 400), 0);
         const std::vector<float> smeared = alphas();
-        const float offSmear = compare(smeared, true, false, &near, &far);
+        const float offSmear = compare(smeared, true, false, &nearby, &farthest);
         const size_t leftOut = size_t(400) * W + 205, rightOut = size_t(400) * W + (W - 1 - 205);
         const bool oneStep = engine.history().undoCount() == stepsBefore + 1;
         engine.undo(true);
@@ -1727,7 +1731,7 @@ bool runAdjustmentTests(CanvasEngine& engine)
         engine.commitEdit();
         return began;
     };
-    auto near = [](const Px& p, int r, int g, int b, int tol = 2) {
+    auto nearby = [](const Px& p, int r, int g, int b, int tol = 2) {
         return std::abs(p.r - r) <= tol && std::abs(p.g - g) <= tol && std::abs(p.b - b) <= tol;
     };
     const int undoBase = engine.history().undoCount();
@@ -1749,7 +1753,7 @@ bool runAdjustmentTests(CanvasEngine& engine)
     engine.undo(true);
     check(QStringLiteral("levels: white point at 200 turns 200 into %1 and 100 into %2; midtones 2.0 lift 100 to %3; output 64..191 squeezes it to %4")
               .arg(levLight.r).arg(levDark.r).arg(gammaDark.r).arg(squeezed.r),
-          near(levLight, 255, 255, 255) && near(levDark, 128, 128, 128, 3) && std::abs(gammaDark.r - 160) <= 3
+          nearby(levLight, 255, 255, 255) && nearby(levDark, 128, 128, 128, 3) && std::abs(gammaDark.r - 160) <= 3
               && std::abs(squeezed.r - 114) <= 3 && read(empty.x(), empty.y()).a == 0);
 
     // Curves: a table that inverts red only.
@@ -1763,7 +1767,7 @@ bool runAdjustmentTests(CanvasEngine& engine)
     apply(Adjustment::Curves, p);
     const Px curved = read(red.x(), red.y());
     engine.undo(true);
-    check(QStringLiteral("curves: a red-only curve changes red (200 -> %1) and leaves green and blue").arg(curved.r), near(curved, 55, 30, 30));
+    check(QStringLiteral("curves: a red-only curve changes red (200 -> %1) and leaves green and blue").arg(curved.r), nearby(curved, 55, 30, 30));
 
     p = {};
     p.v[0] = 0.2f;
@@ -1794,7 +1798,7 @@ bool runAdjustmentTests(CanvasEngine& engine)
     check(QStringLiteral("colour balance towards red tints grey (%1, %2, %3) at the same lightness; black and white makes red %4 grey; invert gives (%5, %6, %7)")
               .arg(warmed.r).arg(warmed.g).arg(warmed.b).arg(grey.r).arg(inverted.r).arg(inverted.g).arg(inverted.b),
           warmed.r > warmed.g + 20 && std::abs(qRound(0.299 * warmed.r + 0.587 * warmed.g + 0.114 * warmed.b) - 100) <= 3
-              && grey.r == grey.g && grey.g == grey.b && std::abs(grey.r - 81) <= 3 && near(inverted, 55, 225, 225));
+              && grey.r == grey.g && grey.g == grey.b && std::abs(grey.r - 81) <= 3 && nearby(inverted, 55, 225, 225));
 
     p = {};
     p.v[0] = 2.0f;
@@ -1806,7 +1810,7 @@ bool runAdjustmentTests(CanvasEngine& engine)
     const Px thDark = read(dark.x(), dark.y()), thLight = read(light.x(), light.y());
     engine.undo(true);
     check(QStringLiteral("posterize to two steps and threshold at half both send 100 to black and 200 to white"),
-          near(postDark, 0, 0, 0) && near(postLight, 255, 255, 255) && near(thDark, 0, 0, 0) && near(thLight, 255, 255, 255));
+          nearby(postDark, 0, 0, 0) && nearby(postLight, 255, 255, 255) && nearby(thDark, 0, 0, 0) && nearby(thLight, 255, 255, 255));
 
     // Noise varies the pixels but not their alpha, and adds nothing where the layer is empty.
     p = {};
@@ -1844,7 +1848,7 @@ bool runAdjustmentTests(CanvasEngine& engine)
     const Px edgeIn = read(21, 200);
     engine.undo(true);
     check(QStringLiteral("mosaic gives a 40 px square one colour; sharpen leaves flat colour as it was"),
-          tileA.r == tileB.r && tileA.a == tileB.a && near(flat, 100, 100, 100) && edgeIn.a == 255);
+          tileA.r == tileB.r && tileA.a == tileB.a && nearby(flat, 100, 100, 100) && edgeIn.a == 255);
 
     // Confined to the selection, and nothing left on the undo stack that should not be.
     engine.setSelection(rect(20, 50, 50, 300), QStringLiteral("Select"));
@@ -1855,8 +1859,8 @@ bool runAdjustmentTests(CanvasEngine& engine)
     engine.undo(true);
     engine.undo(true);
     check(QStringLiteral("with a selection only the selected part is adjusted; every adjustment is one undo step"),
-          near(inside, 155, 155, 155) && near(outside, 100, 100, 100) && engine.history().undoCount() == undoBase
-              && near(read(dark.x(), dark.y()), 100, 100, 100));
+          nearby(inside, 155, 155, 155) && nearby(outside, 100, 100, 100) && engine.history().undoCount() == undoBase
+              && nearby(read(dark.x(), dark.y()), 100, 100, 100));
     return all;
 }
 
@@ -2124,12 +2128,12 @@ bool runGradientTests(CanvasEngine& engine)
                            {{0.0f, QColor(255, 0, 0)}, {0.25f, QColor(255, 0, 0, 0)}, {0.75f, QColor(0, 0, 255, 0)}, {1.0f, QColor(0, 0, 255)}},
                            GradientKind::Linear);
         engine.endGradient(true);
-        const Px gap = read(300, 200), fading = read(150, 200), far = read(450, 200);
+        const Px gap = read(300, 200), fading = read(150, 200), farthest = read(450, 200);
         check(QStringLiteral("three colours given out of order: red, then green in the middle, then blue, with even blends between; "
                              "a stop may be transparent, leaving a gap (%1 at its middle, %2 on the way in)")
                   .arg(gap.a, 0, 'f', 2).arg(fading.a, 0, 'f', 2),
               pure && between && gap.a < 0.01f && std::abs(fading.a - 0.5f) < 0.03f && fading.r > 0.45f && fading.g < 0.02f
-                  && std::abs(far.a - 0.5f) < 0.03f && far.b > 0.45f);
+                  && std::abs(farthest.a - 0.5f) < 0.03f && farthest.b > 0.45f);
         engine.undo(true);
     }
     return all;
@@ -2541,10 +2545,10 @@ bool runHistogramTests(CanvasEngine& engine)
     auto elsewhere = [](const QVector<float>& bins, std::initializer_list<int> full) {
         float stray = 0.0f;
         for (int i = 0; i < bins.size(); ++i) {
-            bool near = false;
+            bool nearby = false;
             for (int at : full)
-                near = near || std::abs(i - at) <= 1;
-            if (!near)
+                nearby = nearby || std::abs(i - at) <= 1;
+            if (!nearby)
                 stray = std::max(stray, bins[i]);
         }
         return stray;
@@ -3934,7 +3938,7 @@ static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
         all = all && ok;
         qInfo().noquote() << QStringLiteral("  %1 %2").arg(ok ? "ok    " : "FAILED").arg(what);
     };
-    auto near = [](const QColor& c, int r, int g, int b, int tol) {
+    auto nearby = [](const QColor& c, int r, int g, int b, int tol) {
         return c.isValid() && std::abs(c.red() - r) <= tol && std::abs(c.green() - g) <= tol && std::abs(c.blue() - b) <= tol;
     };
     auto block = [](const QColor& c, int x) {
@@ -3953,7 +3957,7 @@ static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
     engine.removeLayer(empty);
     engine.setActiveLayer(green);
     const QImage still = engine.renderImage();
-    const bool allThree = near(still.pixelColor(50, 150), 220, 30, 30, 2) && near(still.pixelColor(190, 150), 30, 30, 220, 2) && near(still.pixelColor(330, 150), 30, 160, 60, 2);
+    const bool allThree = nearby(still.pixelColor(50, 150), 220, 30, 30, 2) && nearby(still.pixelColor(190, 150), 30, 30, 220, 2) && nearby(still.pixelColor(330, 150), 30, 160, 60, 2);
 
     // One frame at a time, the one before it faded behind it.
     Animation anim;
@@ -3963,10 +3967,10 @@ static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
     anim.tintOnion = false;
     engine.setAnimation(anim);
     const QImage frame = engine.renderImage();
-    const bool alone = engine.frames() == QVector<int>{red, blue, green} && engine.currentFrame() == 2 && near(frame.pixelColor(330, 150), 30, 160, 60, 2)
-                       && near(frame.pixelColor(190, 150), 255, 255, 255, 1) && near(frame.pixelColor(50, 150), 255, 255, 255, 1);
+    const bool alone = engine.frames() == QVector<int>{red, blue, green} && engine.currentFrame() == 2 && nearby(frame.pixelColor(330, 150), 30, 160, 60, 2)
+                       && nearby(frame.pixelColor(190, 150), 255, 255, 255, 1) && nearby(frame.pixelColor(50, 150), 255, 255, 255, 1);
     const QColor onion = engine.pickColor(QPoint(190, 150));
-    const bool faded = near(onion, 142, 142, 237, 4) && near(engine.pickColor(QPoint(50, 150)), 255, 255, 255, 1);
+    const bool faded = nearby(onion, 142, 142, 237, 4) && nearby(engine.pickColor(QPoint(50, 150)), 255, 255, 255, 1);
     anim.tintOnion = true;
     engine.setAnimation(anim);
     const QColor tinted = engine.pickColor(QPoint(190, 150));
@@ -3978,12 +3982,12 @@ static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
     // Choosing a frame chooses its layer; the first frame can stay as a background.
     engine.showFrame(0);
     const QImage first = engine.renderImage();
-    const bool chosen = engine.activeLayerId() == red && near(first.pixelColor(50, 150), 220, 30, 30, 2) && near(first.pixelColor(330, 150), 255, 255, 255, 1);
+    const bool chosen = engine.activeLayerId() == red && nearby(first.pixelColor(50, 150), 220, 30, 30, 2) && nearby(first.pixelColor(330, 150), 255, 255, 255, 1);
     anim.background = true;
     engine.setAnimation(anim);
     const QImage withBackground = engine.renderFrame(2);
-    const bool background = near(withBackground.pixelColor(50, 150), 220, 30, 30, 2) && near(withBackground.pixelColor(330, 150), 30, 160, 60, 2)
-                            && near(withBackground.pixelColor(190, 150), 255, 255, 255, 1);
+    const bool background = nearby(withBackground.pixelColor(50, 150), 220, 30, 30, 2) && nearby(withBackground.pixelColor(330, 150), 30, 160, 60, 2)
+                            && nearby(withBackground.pixelColor(190, 150), 255, 255, 255, 1);
     anim.background = false;
     engine.setAnimation(anim);
     check(QStringLiteral("animation: showing the first frame makes its layer the active one; as a background it stays under the others"), chosen && background);
@@ -4043,8 +4047,8 @@ static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
     }
     std::sort(delays.begin(), delays.end());
     const bool gifOk = gifWritten && read.size() == 3 && reader.loopCount() == -1 && delays == QList<int>{100, 100, 300}
-                       && near(read[0].pixelColor(50, 150), 220, 30, 30, 24) && near(read[1].pixelColor(190, 150), 30, 30, 220, 24)
-                       && near(read[2].pixelColor(330, 150), 30, 160, 60, 24) && near(read[0].pixelColor(330, 150), 255, 255, 255, 16);
+                       && nearby(read[0].pixelColor(50, 150), 220, 30, 30, 24) && nearby(read[1].pixelColor(190, 150), 30, 30, 220, 24)
+                       && nearby(read[2].pixelColor(330, 150), 30, 160, 60, 24) && nearby(read[0].pixelColor(330, 150), 255, 255, 255, 16);
     const bool apngWritten = animio::writeApng(apng, frames, 10, true, &error);
     QFile file(apng);
     file.open(QIODevice::ReadOnly);
@@ -4063,7 +4067,7 @@ static bool runAnimationTests(CanvasEngine& engine, const QString& outPath)
         at += 12 + length;
     }
     const QImage firstFrame(apng);
-    const bool apngOk = apngWritten && numFrames == 3 && fctl == 3 && fdat == 2 && secondDelay == 300 && near(firstFrame.pixelColor(50, 150), 220, 30, 30, 1);
+    const bool apngOk = apngWritten && numFrames == 3 && fctl == 3 && fdat == 2 && secondDelay == 300 && nearby(firstFrame.pixelColor(50, 150), 220, 30, 30, 1);
     check(QStringLiteral("animation: out as a GIF (%1 frames, %2 ms the held one, looping) and as an animated PNG (%3 frames, the default image the first)")
               .arg(read.size()).arg(delays.value(2)).arg(numFrames),
           gifOk && apngOk);
@@ -4095,7 +4099,7 @@ static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
         all = all && ok;
         qInfo().noquote() << QStringLiteral("  %1 %2").arg(ok ? "ok    " : "FAILED").arg(what);
     };
-    auto near = [](const QColor& c, int r, int g, int b, int tol) {
+    auto nearby = [](const QColor& c, int r, int g, int b, int tol) {
         return std::abs(c.red() - r) <= tol && std::abs(c.green() - g) <= tol && std::abs(c.blue() - b) <= tol;
     };
     auto box = [&](const QRectF& r, bool ellipse = false) {
@@ -4161,7 +4165,7 @@ static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
             engine.setGradient(QPointF(300, 300), QPointF(500, 300), red, blue, p.kind);
             engine.endGradient(true);
             const QColor c = engine.pickColor(p.at);
-            if (!near(c, p.r, 0, p.b, 12))
+            if (!nearby(c, p.r, 0, p.b, 12))
                 wrong << QStringLiteral("%1 at %2,%3 is %4").arg(QLatin1String(p.name)).arg(p.at.x()).arg(p.at.y()).arg(c.name());
         }
         check(QStringLiteral("linear, radial, angle, reflected and diamond gradients each put the colours where they belong%1")
@@ -4178,7 +4182,7 @@ static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
         box(QRectF(0, 0, 400, 600));
         engine.addLayerMask(group);
         engine.clearSelection();
-        const bool hides = near(engine.pickColor(QPoint(200, 300)), 220, 30, 30, 2) && near(engine.pickColor(QPoint(600, 300)), 255, 255, 255, 2);
+        const bool hides = nearby(engine.pickColor(QPoint(200, 300)), 220, 30, 30, 2) && nearby(engine.pickColor(QPoint(600, 300)), 255, 255, 255, 2);
         // Painting white on the group's mask brings the right side back where the brush goes.
         engine.setActiveLayer(group);
         engine.setMaskEditing(true);
@@ -4190,7 +4194,7 @@ static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
         const bool began = engine.beginStroke(StrokeTool::Brush, round, 80, 1.0f, Qt::white, a, 7);
         engine.strokeTo(b);
         engine.endStroke();
-        const bool painted = began && near(engine.pickColor(QPoint(600, 300)), 220, 30, 30, 4) && near(engine.pickColor(QPoint(600, 500)), 255, 255, 255, 2);
+        const bool painted = began && nearby(engine.pickColor(QPoint(600, 300)), 220, 30, 30, 4) && nearby(engine.pickColor(QPoint(600, 500)), 255, 255, 255, 2);
         engine.setMaskEditing(false);
         const QImage picture = engine.renderImage();
         // Through a file, through PSD and OpenRaster, and flattened.
@@ -4270,15 +4274,15 @@ static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
         engine.moveLayer(colour, 0, 0);
         engine.setActiveLayer(colour);
         const bool filled = engine.floodFill(QPoint(400, 300), QColor(40, 160, 60), 0.2f);
-        const bool contained = filled && near(engine.pickColor(QPoint(400, 300)), 40, 160, 60, 3) && near(engine.pickColor(QPoint(100, 300)), 255, 255, 255, 2);
+        const bool contained = filled && nearby(engine.pickColor(QPoint(400, 300)), 40, 160, 60, 3) && nearby(engine.pickColor(QPoint(100, 300)), 255, 255, 255, 2);
         // And on a layer of the group itself, the lines on the other layers of it still hold the colour in.
         engine.clearLayer(colour);
         engine.setActiveLayer(lines);
         const int member = engine.addLayer();
         const bool inside = engine.layerInfo(member).parent == group;
         const bool filledInside = engine.floodFill(QPoint(400, 300), QColor(200, 120, 30), 0.2f);
-        const bool heldInside = inside && filledInside && near(engine.pickColor(QPoint(400, 300)), 200, 120, 30, 3)
-                                && near(engine.pickColor(QPoint(100, 300)), 255, 255, 255, 2);
+        const bool heldInside = inside && filledInside && nearby(engine.pickColor(QPoint(400, 300)), 200, 120, 30, 3)
+                                && nearby(engine.pickColor(QPoint(100, 300)), 255, 255, 255, 2);
         check(QStringLiteral("a group as the reference: a fill on a layer outside it, or on another layer inside it, stops at its lines"),
               marked && contained && heldInside);
     }
@@ -4385,7 +4389,7 @@ static bool runSmallGapTests(CanvasEngine& engine, const QString& outPath)
         bool same = imported && imported->colors.size() >= 5;
         for (int k = 0; same && k < colours.size(); ++k) {
             const QColor c = imported->colors[k];
-            same = colours[k].isValid() ? c.isValid() && near(c, colours[k].red(), colours[k].green(), colours[k].blue(), 1) : !c.isValid();
+            same = colours[k].isValid() ? c.isValid() && nearby(c, colours[k].red(), colours[k].green(), colours[k].blue(), 1) : !c.isValid();
         }
         const int placed = lib.placeSwatch(id, 0, QColor(10, 20, 30));
         const bool nextFree = placed == 1 && lib.find(id)->colors[1] == QColor(10, 20, 30);
@@ -4674,6 +4678,13 @@ int runInterchangeSample(const QString& dir)
 static void isolateSettings()
 {
     static QTemporaryDir dir, data;
+#if defined(Q_OS_WIN)
+    // XDG paths do not redirect the Windows registry or known folders.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, dir.path());
+    QStandardPaths::setTestModeEnabled(true);
+#endif
     qputenv("XDG_CONFIG_HOME", dir.path().toUtf8());
     qputenv("XDG_DATA_HOME", data.path().toUtf8());   // figures kept, and anything else kept as data
 }
@@ -5279,10 +5290,14 @@ int runDeviceReport()
 // If the run is killed by a watchdog (`timeout`), say where it was stuck.
 static void dumpStackAndExit(int)
 {
+#if defined(Q_OS_LINUX)
     void* frames[64];
     const int n = backtrace(frames, 64);
     backtrace_symbols_fd(frames, n, STDERR_FILENO);
     _exit(124);
+#else
+    std::_Exit(124);
+#endif
 }
 
 // The 3D reference through the window: the figure on show, turned, posed by a joint, and placed.
@@ -5364,7 +5379,7 @@ static bool runModelUi(MainWindow& window, CanvasEngine& engine, const std::func
     auto* hard = window.findChild<QWidget*>(QStringLiteral("model-hard"));
     penTap(hard, QPointF(hard->width() / 2.0, hard->height() / 2.0));
     check(QStringLiteral("in Light, a drag moves the light (it turns %1°); Hard light makes it two tones")
-              .arg(std::acos(std::clamp(double(QVector3D::dotProduct(lightBefore, view->lightDirection())), -1.0, 1.0)) * 180.0 / M_PI, 0, 'f', 0),
+              .arg(std::acos(std::clamp(double(QVector3D::dotProduct(lightBefore, view->lightDirection())), -1.0, 1.0)) * 180.0 / std::numbers::pi, 0, 'f', 0),
           QVector3D::dotProduct(lightBefore, view->lightDirection()) < 0.95f && view->hardLight());
     capture(QStringLiteral("model-light"));
     penTap(hard, QPointF(hard->width() / 2.0, hard->height() / 2.0));
@@ -6017,7 +6032,7 @@ int runUiShot(const QString& outPrefix)
             penTap(view, QPointF(1060, 710));
             const QColor dropped = canvasPixel(QPointF(1060, 710));
             check(QStringLiteral("armed fill: a tap inside the outline colours only its inside"),
-                  near(dropped, 250, 200, 40, 6) && canvasPixel(QPointF(800, 710)) == outsideBefore && !view->fillArmed());
+                  nearby(dropped, 250, 200, 40, 6) && canvasPixel(QPointF(800, 710)) == outsideBefore && !view->fillArmed());
             capture(QStringLiteral("fill-reference"));
             engine.undo(true);
 
@@ -6037,8 +6052,8 @@ int runUiShot(const QString& outPrefix)
             penWindow(QEvent::TabletRelease, pour + QPointF(192, 0), 0.0, Qt::LeftButton, Qt::NoButton);
             settle();
             check(QStringLiteral("slide while filling: threshold reaches %1%, the colour spreads out over the blob's soft rim").arg(qRound(fillTolerance * 100)),
-                  fillTolerance > 0.4f && !near(rimEarly, 250, 200, 40, 12) && near(rimLate, 250, 200, 40, 12) && !engine.floodActive()
-                      && near(canvasPixel(rimPoint), 250, 200, 40, 12)
+                  fillTolerance > 0.4f && !nearby(rimEarly, 250, 200, 40, 12) && nearby(rimLate, 250, 200, 40, 12) && !engine.floodActive()
+                      && nearby(canvasPixel(rimPoint), 250, 200, 40, 12)
                       && std::abs(QSettings().value(QStringLiteral("prefs/fillTolerance")).toFloat() - fillTolerance) < 0.001f);
             engine.undo(true);
             view->setFillTolerance(0.12f);
@@ -6053,7 +6068,7 @@ int runUiShot(const QString& outPrefix)
                 penWindow(QEvent::TabletMove, chipAt + (rest - chipAt) * (i / 20.0), 0.5, Qt::NoButton, Qt::LeftButton);
             const bool notYet = !engine.floodActive();
             pause(750);
-            const bool pouring = engine.floodActive() && near(canvasPixel(QPointF(1060, 710)), 40, 170, 120, 6);
+            const bool pouring = engine.floodActive() && nearby(canvasPixel(QPointF(1060, 710)), 40, 170, 120, 6);
             const float restTolerance = engine.floodTolerance();
             for (int i = 1; i <= 10; ++i)
                 penWindow(QEvent::TabletMove, rest + QPointF(i * 8, 0), 0.5, Qt::NoButton, Qt::LeftButton);
@@ -6063,7 +6078,7 @@ int runUiShot(const QString& outPrefix)
             check(QStringLiteral("rest the colour chip on the canvas: it pours, and sliding takes the threshold from %1% to %2%")
                       .arg(qRound(restTolerance * 100)).arg(qRound(slidTolerance * 100)),
                   notYet && pouring && slidTolerance > restTolerance + 0.1f && !engine.floodActive()
-                      && near(canvasPixel(QPointF(1060, 710)), 40, 170, 120, 6) && canvasPixel(QPointF(800, 710)) == outsideBefore);
+                      && nearby(canvasPixel(QPointF(1060, 710)), 40, 170, 120, 6) && canvasPixel(QPointF(800, 710)) == outsideBefore);
 
             // The layer panel says which layer is the reference.
             auto* layersBtn = named("layers-button");
@@ -6691,7 +6706,7 @@ int runUiShot(const QString& outPrefix)
             button(QEvent::MouseButtonRelease, to, mods);
             settle();
         };
-        auto far = [](const QPointF& a, const QPointF& b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); };
+        auto farthest = [](const QPointF& a, const QPointF& b) { return std::hypot(a.x() - b.x(), a.y() - b.y()); };
         const int layer = engine.addLayer();
         // Which pixels of the layer the line covers.
         auto ink = [&] {
@@ -6720,7 +6735,7 @@ int runUiShot(const QString& outPrefix)
                 const QPointF at = view->canvasToWidget(line[i].pos);
                 bool clear = true;
                 for (const QPointF& h : handles)
-                    clear = clear && far(h, at) > 26.0;
+                    clear = clear && farthest(h, at) > 26.0;
                 if (clear)
                     return at;
             }
@@ -6741,7 +6756,7 @@ int runUiShot(const QString& outPrefix)
                 for (const QPointF& q : *from) {
                     double nearest = std::numeric_limits<double>::max();
                     for (const QPointF& r : to)
-                        nearest = std::min(nearest, far(q, r));
+                        nearest = std::min(nearest, farthest(q, r));
                     worst = std::max(worst, nearest);
                 }
             }
@@ -6776,7 +6791,7 @@ int runUiShot(const QString& outPrefix)
         const int added = view->shapePoint();
         const double addedShift = strays(waveLine, lineOf());
         check(QStringLiteral("Ctrl + click on the line adds a point there (%1 points, the line within %2 px of where it was)").arg(points()).arg(addedShift, 0, 'f', 2),
-              points() == n0 + 1 && added >= 0 && far(nodeAt(added), spot) < 4.0 && addedShift < 1.6);
+              points() == n0 + 1 && added >= 0 && farthest(nodeAt(added), spot) < 4.0 && addedShift < 1.6);
 
         // Ctrl + press on the line and keep going: the new point comes along.
         const QPointF spot2 = onLine(0.62);
@@ -6784,7 +6799,7 @@ int runUiShot(const QString& outPrefix)
         dragWith(spot2, dropped, Qt::ControlModifier);
         const int pulled = view->shapePoint();
         check(QStringLiteral("Ctrl + drag from the line puts a point where the pointer lets go"),
-              points() == n0 + 2 && pulled >= 0 && far(nodeAt(pulled), dropped) < 3.0 && strays(waveLine, lineOf()) > 30.0);
+              points() == n0 + 2 && pulled >= 0 && farthest(nodeAt(pulled), dropped) < 3.0 && strays(waveLine, lineOf()) > 30.0);
 
         // Alt + click: smooth to sharp and back. Alt + drag only moves.
         clickWith(nodeAt(pulled), Qt::AltModifier);
@@ -6794,13 +6809,13 @@ int runUiShot(const QString& outPrefix)
         const bool smoothAgain = view->editedShape().nodes[size_t(pulled)].smooth && view->shapePointSmooth() && points() == n0 + 2;
         const QPointF before = nodeAt(pulled);
         dragWith(before, before + QPointF(-30, 22), Qt::AltModifier);
-        const bool altMoved = view->editedShape().nodes[size_t(pulled)].smooth && far(nodeAt(pulled), before + QPointF(-30, 22)) < 3.0;
+        const bool altMoved = view->editedShape().nodes[size_t(pulled)].smooth && farthest(nodeAt(pulled), before + QPointF(-30, 22)) < 3.0;
         check(QStringLiteral("Alt + click makes a point sharp, again makes it smooth; Alt + drag moves it and leaves it as it is"), sharp && smoothAgain && altMoved);
 
         // A chosen smooth point shows its two handles; one drags, the other stays in line.
         clickWith(nodeAt(1), Qt::NoModifier);
         const QVector<QPointF> arms = view->shapeArmPositions();
-        bool armsOk = view->shapePoint() == 1 && arms.size() == 2 && far(arms[0], nodeAt(1)) > 8.0 && far(arms[1], nodeAt(1)) > 8.0;
+        bool armsOk = view->shapePoint() == 1 && arms.size() == 2 && farthest(arms[0], nodeAt(1)) > 8.0 && farthest(arms[1], nodeAt(1)) > 8.0;
         if (armsOk) {
             const std::vector<QPointF> beforeArm = lineOf();
             const QPointF target = arms[1] + QPointF(34, -46);
@@ -6808,8 +6823,8 @@ int runUiShot(const QString& outPrefix)
             const QVector<QPointF> after = view->shapeArmPositions();
             const QPointF at = nodeAt(1);
             const QPointF in = after.value(0) - at, out = after.value(1) - at;
-            armsOk = after.size() == 2 && far(after[1], target) < 3.0 && std::abs(in.x() * out.y() - in.y() * out.x()) < 0.02 * far(after[0], at) * far(after[1], at)
-                     && in.x() * out.x() + in.y() * out.y() < 0.0 && std::abs(far(after[0], at) - far(arms[0], at)) < 2.0 && strays(beforeArm, lineOf()) > 4.0
+            armsOk = after.size() == 2 && farthest(after[1], target) < 3.0 && std::abs(in.x() * out.y() - in.y() * out.x()) < 0.02 * farthest(after[0], at) * farthest(after[1], at)
+                     && in.x() * out.x() + in.y() * out.y() < 0.0 && std::abs(farthest(after[0], at) - farthest(arms[0], at)) < 2.0 && strays(beforeArm, lineOf()) > 4.0
                      && view->shapePoint() == 1;
         }
         capture(QStringLiteral("shape-points"));
@@ -6841,7 +6856,7 @@ int runUiShot(const QString& outPrefix)
             pen(QEvent::TabletRelease, spot3, 0.0, Qt::LeftButton, Qt::NoButton);
             settle();
             const int byPen = view->shapePoint();
-            const bool penAdded = points() == n0 + 2 && byPen >= 0 && far(nodeAt(byPen), spot3) < 4.0 && !view->shapeAddArmed();
+            const bool penAdded = points() == n0 + 2 && byPen >= 0 && farthest(nodeAt(byPen), spot3) < 4.0 && !view->shapeAddArmed();
             const bool enabled = removeButton->isEnabled() && smoothButton->isEnabled();
             smoothButton->click();
             settle();
@@ -6895,11 +6910,11 @@ int runUiShot(const QString& outPrefix)
                 settle();
                 const int last = points() - 1;
                 const double shift = strays(ringBefore, lineOf());
-                const bool parted = !view->shapeClosed() && points() == open + 1 && far(nodeAt(0), cutAt) < 1.0 && far(nodeAt(last), cutAt) < 1.0
+                const bool parted = !view->shapeClosed() && points() == open + 1 && farthest(nodeAt(0), cutAt) < 1.0 && farthest(nodeAt(last), cutAt) < 1.0
                                     && shift < 1.2 && view->shapePoint() == 0;
                 capture(QStringLiteral("shape-opened"));
                 dragWith(cutAt, cutAt + QPointF(40, -60), Qt::NoModifier);
-                const bool pulledApart = far(nodeAt(0), nodeAt(last)) > 30.0;
+                const bool pulledApart = farthest(nodeAt(0), nodeAt(last)) > 30.0;
                 closeOk = joined && parted && pulledApart;
                 if (!closeOk)
                     log << QStringLiteral("       joined %1, parted %2 (line moved %3 px), pulled apart %4").arg(joined).arg(parted).arg(shift, 0, 'f', 2).arg(pulledApart);
@@ -6938,14 +6953,14 @@ int runUiShot(const QString& outPrefix)
         const bool asCircle = view->editedShape().kind == Kind::Ellipse && variantShown("circle") && shownName().isEmpty();
         const std::vector<QPointF> ring = lineOf();
         const QPointF centre = view->canvasToWidget(view->editedShape().center);
-        const double radius = far(view->shapeHandlePositions()[0], centre);
+        const double radius = farthest(view->shapeHandlePositions()[0], centre);
         const QPointF onRing = centre + QPointF(radius * 0.7071, -radius * 0.7071);
         clickWith(onRing, Qt::ControlModifier);
         const double ringShift = strays(ring, lineOf());
         const bool fivePoints = view->editedShape().kind == Kind::Path && points() == 5 && view->editedShape().closed() && view->shapeName() == QLatin1String("Shape")
                                 && !variantShown("circle") && shownName() == QLatin1String("Shape");
         check(QStringLiteral("a circle: Ctrl + click on it makes it a shape of five points, round as before (within %1 px), and the bar follows").arg(ringShift, 0, 'f', 2),
-              asCircle && fivePoints && ringShift < 1.6 && view->shapePoint() >= 0 && far(nodeAt(view->shapePoint()), onRing) < 4.0);
+              asCircle && fivePoints && ringShift < 1.6 && view->shapePoint() >= 0 && farthest(nodeAt(view->shapePoint()), onRing) < 4.0);
         // Pull the new point outwards and make it sharp: a drop.
         const int tip = view->shapePoint();
         dragWith(nodeAt(tip), nodeAt(tip) + QPointF(70, -70), Qt::NoModifier);
@@ -6972,7 +6987,7 @@ int runUiShot(const QString& outPrefix)
         const QVector<QPointF> boxCornersAt = view->shapeHandlePositions();
         clickWith(boxCornersAt.value(0), Qt::AltModifier);
         const bool rounded = view->editedShape().kind == Kind::Path && points() == 4 && view->shapePoint() >= 0 && view->shapePointSmooth()
-                             && far(nodeAt(view->shapePoint()), boxCornersAt.value(0)) < 1.0 && !variantShown("rectangle");
+                             && farthest(nodeAt(view->shapePoint()), boxCornersAt.value(0)) < 1.0 && !variantShown("rectangle");
         clickWith(boxCornersAt.value(2), Qt::ControlModifier);
         const bool three = points() == 3;
         clickWith(nodeAt(1), Qt::ControlModifier);
@@ -6998,7 +7013,7 @@ int runUiShot(const QString& outPrefix)
         dragWith(middle, middle + QPointF(10, 90), Qt::ControlModifier);
         check(QStringLiteral("a line: Ctrl + drag from its middle bends it into a %1 of %2 points").arg(view->shapeName().toLower()).arg(points()),
               asLine && view->editedShape().kind == Kind::Path && points() == 3 && view->shapeName() == QLatin1String("Polyline")
-                  && far(nodeAt(1), middle + QPointF(10, 90)) < 3.0 && !view->editedShape().nodes[1].smooth);
+                  && farthest(nodeAt(1), middle + QPointF(10, 90)) < 3.0 && !view->editedShape().nodes[1].smooth);
         view->finishShapeEdit(true);
         wait(20);
         engine.undo(true);

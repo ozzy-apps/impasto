@@ -2,7 +2,7 @@
 
 # Impasto
 
-A painting app for pen tablets on the Linux desktop, in the spirit of Procreate:
+A painting app for pen tablets on Linux and Windows, in the spirit of Procreate:
 a full-window canvas, brushes that answer to pressure and tilt, and tools that
 stay out of the way until you want them. It paints on the graphics card at 16
 bits a channel, opens and saves Photoshop and OpenRaster files, animates frame
@@ -23,6 +23,9 @@ Downloads are on the [releases page](https://github.com/ozzy-apps/impasto/releas
 Impasto needs OpenGL 4.3, which any graphics card or integrated graphics from
 the last ten years offers.
 
+- **Windows 10/11 (64-bit)**: run the `.exe` installer, or extract the full
+  `Impasto-*-windows-x64.zip` folder and open `impasto.exe`. Qt and the runtime
+  libraries are included. A graphics driver with OpenGL 4.3 is required.
 - **Ubuntu 24.04 and what is built on it** (Zorin OS 18, Linux Mint 22,
   Pop!_OS 24.04): the `.deb`
   ```bash
@@ -44,6 +47,9 @@ the gallery. Documents are `.imp` files; brushes travel as `.impbrush` files.
 takes over Sketchbook's settings, brushes and palettes.)
 
 ## Build and run
+
+For Windows, see [the Windows build instructions](packaging/windows/BUILD.md)
+and run `packaging/build-windows.ps1` from the matching Qt/compiler shell.
 
 Needs a C++20 compiler, CMake, Ninja and the Qt 6 development packages
 (6.4 or newer). On Ubuntu 24.04 and the distributions built on it:

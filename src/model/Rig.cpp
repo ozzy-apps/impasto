@@ -215,11 +215,11 @@ bool Model3D::fitRig(std::vector<QVector3D>* out, QString* why) const
         const std::vector<QVector3D> sole = slice(lo.y(), at(0.05), mine);
         if (sole.size() < 5)
             return fail(QObject::tr("Could not find two feet: rigging needs a person standing on two legs"));
-        float far = -1.0f;
+        float farthest = -1.0f;
         for (const QVector3D& p : sole) {
             const float d = std::hypot(p.x() - ankle[side].x(), p.z() - ankle[side].z());
-            if (d > far) {
-                far = d;
+            if (d > farthest) {
+                farthest = d;
                 toe[side] = p;
             }
         }
@@ -339,11 +339,11 @@ bool Model3D::fitRig(std::vector<QVector3D>* out, QString* why) const
             wrist = QVector3D(cx + s * (shoulderHalf + 0.02f * H), at(0.49), shoulder.z());
             tip = QVector3D(cx + s * (shoulderHalf + 0.02f * H), at(0.39), shoulder.z());
         } else {
-            float far = -1.0f;
+            float farthest = -1.0f;
             for (const QVector3D& p : arm) {
                 const float d = (p - shoulder).length();
-                if (d > far) {
-                    far = d;
+                if (d > farthest) {
+                    farthest = d;
                     tip = p;
                 }
             }
@@ -453,7 +453,7 @@ bool Model3D::bindRig(const std::vector<QVector3D>& J)
     const float H = std::max(1e-6f, hi.y() - lo.y());
     std::vector<float> radius(kBoneCount, 0.05f * H);
     {
-        std::vector<std::vector<float>> near(kBoneCount);
+        std::vector<std::vector<float>> nearby(kBoneCount);
         size_t k = 0;
         for (const ModelMesh& m : baked) {
             for (const QVector3D& p : m.positions) {
@@ -468,12 +468,12 @@ bool Model3D::bindRig(const std::vector<QVector3D>& J)
                         best = b;
                     }
                 }
-                near[size_t(best)].push_back(bestD);
+                nearby[size_t(best)].push_back(bestD);
             }
         }
         for (int b = 0; b < kBoneCount; ++b) {
-            if (near[size_t(b)].size() >= 8)
-                radius[size_t(b)] = std::max(0.012f * H, median(near[size_t(b)]));
+            if (nearby[size_t(b)].size() >= 8)
+                radius[size_t(b)] = std::max(0.012f * H, median(nearby[size_t(b)]));
         }
     }
     // Near a joint a point shares in the bone on the other side of it, half and

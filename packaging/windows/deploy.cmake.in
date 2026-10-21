@@ -1,0 +1,17 @@
+# Run during cmake --install and CPack so every package contains its runtime.
+# Qt 6.4 cannot reliably distinguish MinGW debug/release plugins from PE flags.
+# Auto detection handles MinGW correctly; MSVC should explicitly use Release.
+set(configuration --release)
+if("@MINGW@")
+    set(configuration)
+endif()
+execute_process(
+    COMMAND "@IMPASTO_WINDEPLOYQT@" ${configuration} --compiler-runtime
+        --no-translations --no-opengl-sw --no-system-d3d-compiler
+        --dir "${CMAKE_INSTALL_PREFIX}"
+        "${CMAKE_INSTALL_PREFIX}/impasto.exe"
+    RESULT_VARIABLE deploy_result
+)
+if(NOT deploy_result EQUAL 0)
+    message(FATAL_ERROR "windeployqt failed: ${deploy_result}")
+endif()

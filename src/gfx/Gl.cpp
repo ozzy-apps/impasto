@@ -29,9 +29,9 @@ namespace gfx {
 namespace {
 
 // Entry points from beyond OpenGL 4.3 core, looked up for each context.
-using TexPageCommitment = void (*)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLboolean);
-using TexturePageCommitment = void (*)(GLuint, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLboolean);
-using ClearTexSubImage = void (*)(GLuint, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*);
+using TexPageCommitment = void (APIENTRY *)(GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLboolean);
+using TexturePageCommitment = void (APIENTRY *)(GLuint, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLboolean);
+using ClearTexSubImage = void (APIENTRY *)(GLuint, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei, GLenum, GLenum, const void*);
 struct Extras {
     bool sparse = false;
     int largestSparse = 0;

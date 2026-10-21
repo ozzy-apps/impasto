@@ -1368,7 +1368,7 @@ void MainWindow::showAbout()
     const QSize cs = m_engine->canvasSize();
     QMessageBox::about(this, tr("About Impasto"),
                        tr("<h3>Impasto %1</h3>"
-                          "<p>A GPU painting app for Linux.</p>"
+                          "<p>A GPU painting app.</p>"
                           "<p style='color:#a0a0a8'>Renderer: %2<br>Canvas: %3 × %4 px, %5 layers<br>Undo memory: %6 MB</p>")
                            .arg(QStringLiteral(IMPASTO_VERSION), m_engine->rendererName())
                            .arg(cs.width())

@@ -214,6 +214,14 @@ class AppStyle : public QProxyStyle {
 public:
     AppStyle() : QProxyStyle(QStyleFactory::create(QStringLiteral("Fusion"))) {}
 
+    int styleHint(StyleHint which, const QStyleOption* option = nullptr,
+                  const QWidget* widget = nullptr, QStyleHintReturn* data = nullptr) const override
+    {
+        if (which == SH_DialogButtonBox_ButtonsHaveIcons)
+            return 1;
+        return QProxyStyle::styleHint(which, option, widget, data);
+    }
+
     QIcon standardIcon(StandardPixmap which, const QStyleOption* option = nullptr, const QWidget* widget = nullptr) const override
     {
         switch (which) {

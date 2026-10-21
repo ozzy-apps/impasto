@@ -8,10 +8,11 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace {
 
-constexpr double kDeg = M_PI / 180.0;
+constexpr double kDeg = std::numbers::pi / 180.0;
 
 const char* kVertex = R"(#version 330 core
 layout(location = 0) in vec3 aPos;
@@ -546,10 +547,10 @@ void ModelView::dragHandle(const QPointF& from, const QPointF& to)
     const QPointF c = project(pivot);
     const double a0 = std::atan2(from.y() - c.y(), from.x() - c.x()), a1 = std::atan2(to.y() - c.y(), to.x() - c.x());
     double delta = a1 - a0;
-    while (delta > M_PI)
-        delta -= 2.0 * M_PI;
-    while (delta < -M_PI)
-        delta += 2.0 * M_PI;
+    while (delta > std::numbers::pi)
+        delta -= 2.0 * std::numbers::pi;
+    while (delta < -std::numbers::pi)
+        delta += 2.0 * std::numbers::pi;
     if (QLineF(c, to).length() < 4.0)
         return;   // too close to the joint to say which way
     m_model->turnNode(h.turns, QQuaternion::fromAxisAndAngle(forward, float(delta / kDeg)));

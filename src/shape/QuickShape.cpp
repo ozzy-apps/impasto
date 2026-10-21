@@ -111,19 +111,19 @@ std::vector<int> findVertices(const std::vector<QPointF>& p, bool closed, double
     const int n = int(p.size());
     std::vector<int> idx;
     if (closed) {
-        int far = 0;
+        int farthest = 0;
         double farDist = 0.0;
         for (int i = 1; i < n; ++i) {
             const double d = dist(p[0], p[size_t(i)]);
             if (d > farDist) {
                 farDist = d;
-                far = i;
+                farthest = i;
             }
         }
         idx.push_back(0);
-        rdp(p, 0, far, eps, idx);
-        idx.push_back(far);
-        rdp(p, far, n - 1, eps, idx);   // the last sample sits beside the first, so it is not a vertex
+        rdp(p, 0, farthest, eps, idx);
+        idx.push_back(farthest);
+        rdp(p, farthest, n - 1, eps, idx);   // the last sample sits beside the first, so it is not a vertex
     } else {
         idx.push_back(0);
         rdp(p, 0, n - 1, eps, idx);

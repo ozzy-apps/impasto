@@ -524,11 +524,11 @@ bool exportPsd(CanvasEngine& engine, const QString& path, int bits, QString* err
         extra.append(be32(0));   // no blending ranges
         // The name twice: short and in the old encoding, then in full as UTF-16.
         QByteArray shortName = r.name.toLatin1().left(255);
-        QByteArray pascal(1, char(shortName.size()));
-        pascal.append(shortName);
-        while (pascal.size() % 4)
-            pascal.append('\0');
-        extra.append(pascal);
+        QByteArray pascalName(1, char(shortName.size()));
+        pascalName.append(shortName);
+        while (pascalName.size() % 4)
+            pascalName.append('\0');
+        extra.append(pascalName);
         QByteArray unicode = be32(quint32(r.name.size()));
         for (QChar c : r.name)
             unicode.append(be16(c.unicode()));

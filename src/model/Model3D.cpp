@@ -12,6 +12,7 @@
 #include <QtEndian>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <functional>
 #include <limits>
 
@@ -479,9 +480,9 @@ void addEllipsoid(ModelMesh& m, const QVector3D& centre, const QVector3D& radii,
 {
     const quint32 base = quint32(m.positions.size());
     for (int r = 0; r <= rings; ++r) {
-        const double phi = M_PI * double(r) / rings;
+        const double phi = std::numbers::pi * double(r) / rings;
         for (int s = 0; s <= segments; ++s) {
-            const double theta = 2.0 * M_PI * double(s) / segments;
+            const double theta = 2.0 * std::numbers::pi * double(s) / segments;
             const QVector3D unit(float(std::sin(phi) * std::cos(theta)), float(std::cos(phi)), float(std::sin(phi) * std::sin(theta)));
             m.positions.push_back(centre + unit * radii);
             m.normals.push_back(QVector3D(unit.x() / radii.x(), unit.y() / radii.y(), unit.z() / radii.z()).normalized());
@@ -510,7 +511,7 @@ void addLimb(ModelMesh& m, const QVector3D& a, const QVector3D& b, float ra, flo
     std::vector<std::pair<float, float>> profile;   // (along, radius) with along in -ra..len+rb
     const float len = (b - a).length();
     for (int i = 0; i <= rings; ++i) {
-        const double t = M_PI / 2.0 * (1.0 - double(i) / rings);
+        const double t = std::numbers::pi / 2.0 * (1.0 - double(i) / rings);
         profile.emplace_back(float(-ra * std::sin(t)), float(ra * std::cos(t)));
     }
     // Rings along the length too, so that it bends smoothly and has points all the way down.
@@ -520,7 +521,7 @@ void addLimb(ModelMesh& m, const QVector3D& a, const QVector3D& b, float ra, flo
         profile.emplace_back(len * t, ra + (rb - ra) * t);
     }
     for (int i = 1; i <= rings; ++i) {
-        const double t = M_PI / 2.0 * double(i) / rings;
+        const double t = std::numbers::pi / 2.0 * double(i) / rings;
         profile.emplace_back(float(len + rb * std::sin(t)), float(rb * std::cos(t)));
     }
     for (size_t p = 0; p < profile.size(); ++p) {
@@ -528,7 +529,7 @@ void addLimb(ModelMesh& m, const QVector3D& a, const QVector3D& b, float ra, flo
         const QVector3D centre = a + axis * std::clamp(along, 0.0f, len);
         const float cap = along < 0 ? along : (along > len ? along - len : 0.0f);
         for (int s = 0; s <= segments; ++s) {
-            const double theta = 2.0 * M_PI * double(s) / segments;
+            const double theta = 2.0 * std::numbers::pi * double(s) / segments;
             const QVector3D around = side * float(std::cos(theta)) + up * float(std::sin(theta));
             m.positions.push_back(centre + axis * cap + around * radius);
             m.normals.push_back((around * radius + axis * cap).normalized());

@@ -1,0 +1,9 @@
+Qt 6.4.3 third-party license notices
+
+The Qt/ directory contains license texts and attribution metadata copied
+from the unmodified official qtbase, qtsvg and qtimageformats v6.4.3
+source archives. Module paths are preserved. See qt_attribution.json files
+for component names, copyright holders, licenses, and source locations.
+
+These notices include components bundled into the Qt runtime libraries
+and image-format plugins; some optional Qt components are not distributed.

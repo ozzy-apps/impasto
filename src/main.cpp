@@ -57,6 +57,10 @@ int main(int argc, char** argv)
     // The engine renders in its own context and the viewport samples the result.
     QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
+#if defined(Q_OS_WIN)
+    // The painting engine requires desktop OpenGL 4.3, not an ANGLE/GLES context.
+    QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+#endif
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Impasto"));
     QApplication::setOrganizationName(QStringLiteral("Impasto"));

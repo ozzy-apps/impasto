@@ -1,0 +1,36 @@
+Impasto Windows runtime notices
+
+Impasto: MIT License, Copyright (c) 2026 ozzy-apps. See ../LICENSE.
+Source: https://github.com/ozzy-apps/impasto
+
+Qt Core, Gui, Widgets, OpenGL, OpenGLWidgets, SVG and Image Formats:
+Copyright The Qt Company Ltd. and other contributors.
+Used under LGPL version 3; libraries/plugins are dynamically linked and can
+be replaced with compatible builds. See Qt-LGPL-3.0.txt and Qt-GPL-3.0.txt.
+The Qt GPL exception text is included as Qt-GPL-exception.txt.
+Unmodified Qt source for the supplied 6.4.3 binaries:
+https://download.qt.io/archive/qt/6.4/6.4.3/submodules/
+https://code.qt.io/cgit/qt/qtbase.git/tree/?h=v6.4.3
+https://code.qt.io/cgit/qt/qtsvg.git/tree/?h=v6.4.3
+https://code.qt.io/cgit/qt/qtimageformats.git/tree/?h=v6.4.3
+Qt third-party notices: Qt-Third-Party.txt.
+
+MinGW GCC/libstdc++/libgcc runtime (MinGW builds only):
+Copyright Free Software Foundation, Inc. and contributors.
+GPL version 3 with the GCC Runtime Library Exception 3.1.
+See GCC-GPL-3.0.txt, GCC-Runtime-Exception.txt, and GCC-Copyright.txt.
+Source: https://gcc.gnu.org/releases.html
+
+MinGW-w64 runtime and winpthreads (MinGW builds only):
+See MinGW-Copyright.txt for the applicable permissive notices.
+Source: https://www.mingw-w64.org/
+
+zlib 1.3.1:
+Copyright (C) 1995-2022 Jean-loup Gailly and Mark Adler.
+See zlib-LICENSE.txt. Source: https://github.com/madler/zlib/tree/v1.3.1
+
+WebP 1.6.0 / libsharpyuv:
+Copyright 2010 Google Inc. All rights reserved.
+See WebP-COPYING.txt, WebP-PATENTS.txt and WebP-AUTHORS.txt.
+Source: https://github.com/webmproject/libwebp/tree/v1.6.0
+The shared library output names match the imports of Qt 6.4.3 qwebp.dll.

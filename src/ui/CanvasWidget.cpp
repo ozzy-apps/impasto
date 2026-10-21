@@ -1193,18 +1193,18 @@ QPointF CanvasWidget::rotateKnobPos() const
 
 int CanvasWidget::hitHandle(const QPointF& logical) const
 {
-    auto near = [&](const QPointF& p, double r) { return std::hypot(p.x() - logical.x(), p.y() - logical.y()) <= r; };
+    auto nearby = [&](const QPointF& p, double r) { return std::hypot(p.x() - logical.x(), p.y() - logical.y()) <= r; };
     if (m_tf.warp) {
         for (int i = 0; i < int(m_tf.warpPts.size()); ++i) {
-            if (near(canvasToWidget(m_tf.warpPts[size_t(i)]), 13.0))
+            if (nearby(canvasToWidget(m_tf.warpPts[size_t(i)]), 13.0))
                 return kWarpHandle + i;
         }
         return -1;
     }
-    if (!m_tf.distort && near(rotateKnobPos(), 13.0))
+    if (!m_tf.distort && nearby(rotateKnobPos(), 13.0))
         return kRotateHandle;
     for (int h = 0; h < 8; ++h) {
-        if (near(canvasToWidget(handleCanvasPos(h)), 12.0))
+        if (nearby(canvasToWidget(handleCanvasPos(h)), 12.0))
             return h;
     }
     return -1;

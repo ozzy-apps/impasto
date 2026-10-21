@@ -1,0 +1,25 @@
+Impasto 0.11.1 for Windows x64
+
+Requires Windows 10 or 11 (64-bit) and a graphics driver supporting OpenGL 4.3.
+Install the current graphics driver from your GPU manufacturer.
+
+Portable ZIP: extract the entire folder, then open impasto.exe.
+Keep all DLL files and the platforms, imageformats, and iconengines folders.
+Installer: run the Windows installer, then launch Impasto from Start.
+
+Artworks: Pictures\Impasto, or the folder chosen in the gallery.
+Documents: .imp; legacy .sbk files remain supported.
+Open/import: .imp, .sbk, .psd, .psb, .ora, and supported image formats.
+Settings, brushes, palettes and recovery files use the Windows user profile.
+Copy artwork files between Windows and Linux to continue editing them.
+
+Pen pressure and tilt use Qt's Windows tablet support. Install your tablet's
+Windows driver. Physical tablet behavior must be checked on Windows hardware.
+Video export additionally requires ffmpeg.exe on PATH; other animation export
+formats work without FFmpeg.
+
+The application and runtime libraries are not code-signed.
+
+Source and updates: https://github.com/ozzy-apps/impasto
+Build instructions: packaging/windows/BUILD.md in the source archive.
+Licenses and third-party notices: licenses\THIRD-PARTY.txt.
