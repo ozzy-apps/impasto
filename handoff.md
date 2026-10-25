@@ -25,7 +25,7 @@ A polished desktop painting studio for Linux and Windows, with responsive pen in
 5. **Builds:** rebuilt Linux DEB, AppImage and Flatpak; Windows x64 portable ZIP and NSIS installer. Added bounded build concurrency and optional local AppImage runtime support.
 6. **Verification:** full Linux engine and UI suites passed (UI 61 seconds). Windows engine and portable UI suites passed under Wine (UI 75 seconds, 85 captures, extracted into a path with spaces and é). Actual DEB/AppImage/Flatpak product/About checks passed. Flatpak bundle installed, ran, then was uninstalled. Windows installer installed, ran, and uninstalled; its executable matched the stage and an external artwork was preserved byte-for-byte. ZIP integrity, 26-file Windows DLL audit, PE version, AppStream, relative documentation links and checksums passed.
 7. **Publication:** committed source and new annotated v0.12.0 tag, pushed to main atomically, staged/uploaded packages, checked all server digests, published and verified public access.
-8. **Delivery:** original repository will be fast-forwarded to the final documentation commit. New packages/checksums copied into its dist folder while retaining old packages. This task also retains the complete working checkout and verification reports.
+8. **Delivery:** original repository is synchronized with the published source and final documentation. New packages/checksums copied into its dist folder while retaining old packages. This task also retains the complete working checkout and verification reports.
 
 ## Locations
 - Actual repository: `/home/ozzy/Documents/creative-projects/sketchbook`.
@@ -57,7 +57,7 @@ Native Windows: `packaging/build-windows.ps1 -QtDir <matching Qt kit> -Installer
 This release's Linux build used Qt 6.4.2; Flatpak used KDE Qt 6.10. Windows used MinGW GCC 13 POSIX, official Qt 6.4.3 and zlib 1.3.1. Cross tools are under `/tmp/impasto-windows-toolchain`; they are temporary and may disappear. Host Qt Core/Gui/Widgets Tools were selected explicitly from `/usr/lib/x86_64-linux-gnu/cmake`, with `QT_HOST_PATH=/usr`, `QT_NO_PACKAGE_VERSION_CHECK=TRUE`, `IMPASTO_DEPLOY_QT=OFF`, and local zlib source. Build/stage/config are this task's `work/windows-build`, `work/windows-stage`, `work/windows-package-config.cmake`. Prior audited Qt/compiler/WebP runtime files were reused with the newly built executable, generated README, and licenses. Wine checks used `/tmp/impasto-windows-toolchain/wineprefix`, never the user's normal profile.
 
 ## Roadmap and remaining limits
-No required release work remains once local synchronization is confirmed. Next optional work, in order:
+No required release work remains. Next optional work, in order:
 1. Native Windows hardware validation: tablet pressure/tilt/eraser, GPU drivers, high-DPI and multiple displays. Wine checks do not certify these paths.
 2. Windows signing and automated multi-platform CI. Current packages are unsigned.
 3. Continue painting features without breaking `.imp`, legacy `.sbk`, PSD/PSB or ORA compatibility. Preserve the concise README; put detailed tool documentation in the guide.
