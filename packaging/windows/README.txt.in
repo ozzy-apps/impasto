@@ -1,4 +1,4 @@
-Impasto 0.11.1 for Windows x64
+Impasto @PROJECT_VERSION@ for Windows x64
 
 Requires Windows 10 or 11 (64-bit) and a graphics driver supporting OpenGL 4.3.
 Install the current graphics driver from your GPU manufacturer.

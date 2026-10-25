@@ -38,15 +38,20 @@
   </requires>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/ozzy-apps/impasto/main/docs/screenshot-brush-lab-shape.png</image>
-      <caption>The Brush Lab</caption>
+      <image>https://raw.githubusercontent.com/ozzy-apps/impasto/main/docs/product/painting.png</image>
+      <caption>Painting an alpine landscape in layers</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/ozzy-apps/impasto/main/docs/screenshot-layers.png</image>
-      <caption>Layers</caption>
+      <image>https://raw.githubusercontent.com/ozzy-apps/impasto/main/docs/product/gallery.png</image>
+      <caption>The artwork gallery</caption>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.12.0" date="2026-10-25">
+      <description>
+        <p>A unified Linux and Windows release, with an About dialog in the gallery and updated product screenshots.</p>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-10-15">
       <description>
         <p>The named poses work on rigged models too. Figures: a woman built in beside the mannequin, and any model rigged in Impasto can be kept among them.</p>

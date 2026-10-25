@@ -8,6 +8,9 @@
 #             ~/.cache/impasto-packaging (from github.com/linuxdeploy and github.com/AppImage)
 #   Flatpak   flatpak install --user flathub org.flatpak.Builder org.kde.Sdk//6.10
 #
+# Set IMPASTO_APPIMAGE_RUNTIME to a verified local type-2 runtime for offline packaging.
+# CMAKE_BUILD_PARALLEL_LEVEL controls build jobs (default 4).
+#
 # Usage: packaging/build-packages.sh [deb] [appimage] [flatpak]   (all three when none is named)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -19,7 +22,7 @@ mkdir -p dist
 
 if [[ $wanted == *deb* || $wanted == *appimage* ]]; then
     cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-    cmake --build build-release
+    cmake --build build-release --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-4}"
 fi
 
 if [[ $wanted == *deb* ]]; then
@@ -44,11 +47,15 @@ if [[ $wanted == *appimage* ]]; then
         --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/io.github.ozzy_apps.Impasto.png \
         --plugin qt
     # appimagetool rather than linuxdeploy's own output step, so the name is ours.
-    ARCH=x86_64 "$tools/appimagetool-x86_64.AppImage" --no-appstream AppDir "dist/Impasto-$version-x86_64.AppImage"
+    runtime_args=()
+    if [[ -n ${IMPASTO_APPIMAGE_RUNTIME:-} ]]; then
+        runtime_args=(--runtime-file "$IMPASTO_APPIMAGE_RUNTIME")
+    fi
+    ARCH=x86_64 "$tools/appimagetool-x86_64.AppImage" --no-appstream "${runtime_args[@]}" AppDir "dist/Impasto-$version-x86_64.AppImage"
 fi
 
 if [[ $wanted == *flatpak* ]]; then
-    flatpak run org.flatpak.Builder --user --force-clean --repo=build-flatpak/repo --state-dir=build-flatpak/state \
+    flatpak run org.flatpak.Builder --user --jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-4}" --force-clean --repo=build-flatpak/repo --state-dir=build-flatpak/state \
         build-flatpak/app packaging/flatpak/io.github.ozzy_apps.Impasto.yml
     flatpak build-bundle build-flatpak/repo "dist/Impasto-$version.flatpak" io.github.ozzy_apps.Impasto \
         --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo

@@ -92,6 +92,8 @@ int main(int argc, char** argv)
     }
     if (args.size() >= 3 && args[1] == QLatin1String("--ui-shot"))
         return runUiShot(args[2]);
+    if (args.size() >= 3 && args[1] == QLatin1String("--product-shots"))
+        return runProductShots(args[2]);
 
     carryOverFromSketchbook();   // not for the test runs above: they keep to folders of their own
     theme::apply(app);

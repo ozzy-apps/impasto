@@ -38,6 +38,10 @@
 #include "ui/ModelView.h"
 
 #include <QApplication>
+#include <QAction>
+#include <QDialog>
+#include <QMenu>
+#include <QTimer>
 #include <QDebug>
 #include <QDir>
 #include <QLabel>
@@ -8463,4 +8467,181 @@ int runUiShot(const QString& outPrefix)
     const bool modelOk = runModelUi(window, engine, penTap, penWindow, capture, settle);
     engine.setModified(false);
     return strokesAdded == 2 && shapeOk && pointsOk && penPanelsOk && toolsOk && panelsOk && coloursOk && windowsOk && galleryOk && layeredOk && animationOk && modelOk ? 0 : 2;
+}
+
+int runProductShots(const QString& outputDir)
+{
+    isolateSettings();
+    theme::apply(*qApp);
+    QDir out(QDir(outputDir).absolutePath());
+    if (!out.mkpath(QStringLiteral("Artworks")))
+        return 1;
+    Gallery::setFolder(out.filePath(QStringLiteral("Artworks")));
+    CanvasEngine engine;
+    QString error;
+    if (!engine.initialize(&error)) {
+        qCritical().noquote() << error;
+        return 1;
+    }
+    const auto& brush = *BrushLibrary::instance().find(QStringLiteral("pencil-6b"));
+    auto fill = [&](const QPainterPath& path, const QColor& color, const QString& name) {
+        const int layer = engine.addLayer();
+        engine.setLayerName(layer, name);
+        engine.setSelection(path, QStringLiteral("Selection"));
+        engine.fillLayer(layer, color);
+        engine.clearSelection();
+    };
+    const QStringList names = {QStringLiteral("Alpine light"), QStringLiteral("Afterglow"),
+                               QStringLiteral("Blue hour"), QStringLiteral("Rose valley")};
+    const QColor skies[] = {QColor("#c8d9dc"), QColor("#c4a7be"), QColor("#233959"), QColor("#ebc6bb")};
+    for (int scene = 0; scene < names.size(); ++scene) {
+        engine.newDocument(QSize(1800, 1200), skies[scene]);
+        engine.setLayerName(engine.activeLayerId(), QStringLiteral("Sky"));
+        engine.beginGradient();
+        engine.setGradient(QPointF(900, 0), QPointF(900, 800), skies[scene], QColor("#f4d7ad"), GradientKind::Linear);
+        engine.endGradient(true);
+        QPainterPath sun;
+        sun.addEllipse(QPointF(1240 - scene * 90, 330), 105, 105);
+        fill(sun, QColor("#fff0c9"), QStringLiteral("Sun"));
+        const QColor hills[] = {QColor("#8aabae"), QColor("#517e87"), QColor("#285461"), QColor("#143c47")};
+        for (int ridge = 0; ridge < 4; ++ridge) {
+            QPainterPath path;
+            path.moveTo(-20, 1200);
+            for (int i = 0; i <= 24; ++i) {
+                const qreal x = i * 80 - 20;
+                const qreal y = 560 + ridge * 135 + 85 * std::sin(i * 0.48 + ridge * 1.5 + scene * 0.7)
+                                + 42 * std::sin(i * 1.16 + ridge);
+                path.lineTo(x, y);
+            }
+            path.lineTo(1850, 1200);
+            path.closeSubpath();
+            QColor tone = hills[ridge];
+            if (scene == 1 || scene == 3)
+                tone = QColor::fromHslF(0.91 - ridge * 0.07, 0.15 + ridge * 0.05, 0.62 - ridge * 0.12);
+            fill(path, tone, QStringLiteral("Ridge %1").arg(ridge + 1));
+        }
+        QPainterPath water;
+        water.moveTo(690, 1200);
+        water.cubicTo(1640, 980, 810, 1000, 1110, 820);
+        water.cubicTo(1170, 795, 1280, 790, 1310, 780);
+        water.cubicTo(1090, 820, 1020, 835, 1030, 875);
+        water.cubicTo(960, 1000, 1440, 950, 1080, 1200);
+        water.closeSubpath();
+        fill(water, QColor("#b1d4ce"), QStringLiteral("River"));
+        // Real brush marks on a separate paint layer, using the same stroke
+        // engine as the viewport. No UI or artwork pixels are mocked.
+        const int marks = engine.addLayer();
+        engine.setLayerName(marks, QStringLiteral("Pencil highlights"));
+        for (int i = 0; i < 16; ++i)
+            wave(engine, StrokeTool::Brush, brush, 5, 0.45f, QColor("#f6ddb3"),
+                 QPointF(180 + i * 67, 830 + (i % 3) * 19),
+                 QPointF(290 + i * 67, 805 + (i % 3) * 19), 8);
+        QPainterPath trees;
+        for (int i = 0; i < 28; ++i) {
+            const qreal x = i * 72 - 10;
+            const qreal base = 1110 + 55 * std::sin(i * 0.85);
+            const qreal h = 60 + (i * 37 % 100);
+            if (x > 700 && x < 1270)
+                continue;
+            trees.moveTo(x, base - h);
+            trees.lineTo(x + h * 0.3, base);
+            trees.lineTo(x - h * 0.3, base);
+            trees.closeSubpath();
+        }
+        fill(trees, QColor("#102e38"), QStringLiteral("Pines"));
+        if (!docio::save(engine, QDir(Gallery::folder()).filePath(names[scene] + QStringLiteral(".imp")), &error)) {
+            qCritical().noquote() << error;
+            return 1;
+        }
+    }
+    MainWindow window(&engine);
+    window.resize(1600, 1000);
+    if (!window.openPath(QDir(Gallery::folder()).filePath(names.first() + QStringLiteral(".imp"))))
+        return 1;
+    window.show();
+    auto settle = [] {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 400) {
+            QApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(5);
+        }
+    };
+    auto capture = [&](const QString& name) {
+        settle();
+        auto* host = window.centralWidget();
+        auto* canvas = host->findChild<CanvasWidget*>();
+        QImage image = canvas->grabFramebuffer().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        QPainter painter(&image);
+        for (QObject* child : host->children()) {
+            auto* widget = qobject_cast<QWidget*>(child);
+            if (widget && widget != canvas && widget->isVisible())
+                widget->render(&painter, widget->pos(), QRegion(), QWidget::DrawChildren);
+        }
+        painter.end();
+        return image.save(out.filePath(name + QStringLiteral(".png")));
+    };
+    window.showForScreenshot(QStringLiteral("layers"));
+    bool ok = capture(QStringLiteral("painting"));
+    window.showForScreenshot(QStringLiteral("brushes"));
+    ok = capture(QStringLiteral("brushes")) && ok;
+    window.resize(1280, 620);
+    window.showGallery();
+    ok = capture(QStringLiteral("gallery")) && ok;
+    auto* more = window.findChild<QAbstractButton*>(QStringLiteral("gallery-menu"));
+    bool opened = false, closed = false, escaped = false;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, &window, [&] {
+        ok = false;
+        if (auto* modal = qobject_cast<QDialog*>(QApplication::activeModalWidget())) modal->reject();
+        if (auto* popup = QApplication::activePopupWidget()) popup->close();
+    });
+    watchdog.start(10000);
+    QTimer::singleShot(100, &window, [&] {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        auto* action = menu ? menu->findChild<QAction*>(QStringLiteral("gallery-about")) : nullptr;
+        if (!action) {
+            if (menu) menu->close();
+            return;
+        }
+        menu->close();
+        QTimer::singleShot(100, &window, [&] {
+            auto* dialog = window.findChild<QDialog*>(QStringLiteral("about-dialog"));
+            if (!dialog) return;
+            const auto* version = dialog->findChild<QLabel*>(QStringLiteral("about-version"));
+            const auto* logo = dialog->findChild<QLabel*>(QStringLiteral("about-logo"));
+            const auto* support = dialog->findChild<QLabel*>(QStringLiteral("about-support"));
+            const auto* repo = dialog->findChild<QLabel*>(QStringLiteral("about-repository"));
+            const auto* stack = dialog->findChild<QLabel*>(QStringLiteral("about-stack"));
+            const auto* credit = dialog->findChild<QLabel*>(QStringLiteral("about-credit"));
+            opened = dialog->isVisible() && version && version->text().contains(QApplication::applicationVersion())
+                     && logo && !logo->pixmap().isNull()
+                     && support && support->openExternalLinks() && support->text().contains(QStringLiteral("mailto:impasto@ozzy.co.nl"))
+                     && repo && repo->openExternalLinks() && repo->text().contains(QStringLiteral("https://github.com/ozzy-apps/impasto"))
+                     && stack && stack->text().contains(QStringLiteral("C++20 · Qt 6 · OpenGL"))
+                     && credit && credit->text().contains(QStringLiteral("Made with love by Ozzy")) && credit->text().contains(QStringLiteral("❤️"));
+            ok = dialog->grab().save(out.filePath(QStringLiteral("about.png"))) && ok;
+            auto* close = dialog->findChild<QPushButton*>(QStringLiteral("about-close"));
+            if (close) close->click();
+            else dialog->reject();
+            closed = !dialog->isVisible();
+        });
+        action->trigger();
+        QTimer::singleShot(100, &window, [&] {
+            auto* dialog = window.findChild<QDialog*>(QStringLiteral("about-dialog"));
+            if (!dialog) return;
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(dialog, &escape);
+            escaped = !dialog->isVisible();
+        });
+        action->trigger();
+    });
+    if (more) more->click();
+    watchdog.stop();
+    qInfo() << "Product screenshots:" << ok << "Gallery About/version/logo/links/credit/stack:" << opened << "Close:" << closed << "Escape:" << escaped;
+    // Closing About must leave the artwork and gallery intact.
+    ok = ok && opened && closed && escaped && window.gallery()->isVisible() && engine.canvasSize() == QSize(1800, 1200);
+    engine.setModified(false);
+    return ok ? 0 : 2;
 }

@@ -1,4 +1,5 @@
 #include "ui/Gallery.h"
+#include "ui/AboutDialog.h"
 
 #include "io/DocumentIO.h"
 #include "ui/Theme.h"
@@ -380,7 +381,7 @@ Gallery::Gallery(QWidget* parent) : QWidget(parent)
     create->setActive(true);
     m_more = new IconButton(QStringLiteral("more"), header, 20);
     m_more->setObjectName(QStringLiteral("gallery-menu"));
-    m_more->setToolTip(tr("Gallery folder"));
+    m_more->setToolTip(tr("Gallery menu"));
     h->addWidget(m_more, 0, Qt::AlignVCenter);
     outer->addWidget(header);
 
@@ -583,5 +584,11 @@ void Gallery::showFolderMenu()
         QDesktopServices::openUrl(QUrl::fromLocalFile(folder()));
     });
     menu.addAction(tr("Refresh"), this, [this] { refresh(m_open); });
+    menu.addSeparator();
+    auto* about = menu.addAction(tr("About Impasto"), this, [this] {
+        AboutDialog dialog(window());
+        dialog.exec();
+    });
+    about->setObjectName(QStringLiteral("gallery-about"));
     menu.exec(m_more->mapToGlobal(QPoint(m_more->width() - 220, m_more->height() + 6)));
 }

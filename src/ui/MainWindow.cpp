@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "ui/AboutDialog.h"
 
 #include "io/DocumentIO.h"
 #include "io/Interchange.h"
@@ -1365,16 +1366,8 @@ void MainWindow::showShortcuts()
 
 void MainWindow::showAbout()
 {
-    const QSize cs = m_engine->canvasSize();
-    QMessageBox::about(this, tr("About Impasto"),
-                       tr("<h3>Impasto %1</h3>"
-                          "<p>A GPU painting app.</p>"
-                          "<p style='color:#a0a0a8'>Renderer: %2<br>Canvas: %3 × %4 px, %5 layers<br>Undo memory: %6 MB</p>")
-                           .arg(QStringLiteral(IMPASTO_VERSION), m_engine->rendererName())
-                           .arg(cs.width())
-                           .arg(cs.height())
-                           .arg(m_engine->layerCount())
-                           .arg(m_engine->history().bytes() / (1024 * 1024)));
+    AboutDialog dialog(this);
+    dialog.exec();
 }
 
 // ------------------------------------------------------------------- files

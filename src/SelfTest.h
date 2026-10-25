@@ -20,5 +20,8 @@ int runDeviceReport();
 // Opens the real window offscreen-style, paints a little and grabs screenshots
 // of the interface (prefix-main.png, prefix-brushes.png, ...).
 int runUiShot(const QString& outPrefix);
+// Paints sample documents with the engine, captures the running UI, and checks
+// the gallery About menu, version, links, and both dialog dismissal paths.
+int runProductShots(const QString& outputDir);
 int runRigCheck(const QString& modelPath, const QString& outPrefix);
 int runMakeFigure(const QString& modelPath, const QString& outGlb, const QString& name, const QString& settingsFile);

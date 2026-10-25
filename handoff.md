@@ -1,3 +1,78 @@
+# Impasto 0.12.0 — release handoff
+
+## Vision and constraints
+A polished desktop painting studio for Linux and Windows. Preserve the painting workflow, document compatibility, and user artwork. UI copy must be functional; new UI follows Material 3. This release aligns all packages at 0.12.0, adds About in the gallery, and refreshes the product README with genuine app screenshots.
+
+## Stack and architecture
+C++20, Qt 6 Widgets/Core/Gui/OpenGL/OpenGLWidgets/Svg, OpenGL 4.3, zlib, CMake/Ninja/CPack. Entry: src/main.cpp; GPU painting: src/engine, src/gfx, resources/shaders; brush engine: src/brush; document interchange: src/io; interface: src/ui. Built-in engine/UI checks live in src/SelfTest.cpp.
+
+## Step 1 — discovery completed
+- Original repository: /home/ozzy/Documents/creative-projects/sketchbook, clean main at 0737902.
+- Remote: https://github.com/ozzy-apps/impasto. GitHub credentials have push/admin access.
+- Fresh isolated checkout in this task at outputs/impasto, branch release/0.12.0. Original checkout remains untouched during implementation.
+- Live GitHub inspection: Linux v0.9.0 release contains DEB/AppImage/Flatpak; Windows v0.11.1 release contains ZIP/NSIS installer. Both published. Existing v0.11.1 tag points to the pre-port commit, so do not reuse or move it.
+- Chosen new version: 0.12.0. All rebuilt packages and a new tag will reference the same tested source commit.
+
+## Step 2 — implementation completed; verification in progress
+- Added shared src/ui/AboutDialog.* with logo, application version, actual C++20/Qt 6/OpenGL stack, Ozzy credit, support mailto, and verified GitHub URL. Accessible from gallery overflow and existing canvas About entry.
+- Rounded tonal dialog, 24 px insets, 48-ish pixel text-button target, keyboard dismissal, selectable links.
+- CMake version is 0.12.0. Windows README is now generated from CMake using README.txt.in; PE version and package names already derive from CMake. Added AppStream release metadata.
+- Preserved the former detailed README as docs/guide.md and replaced README.md with concise product copy and fresh screenshot references.
+- Added --product-shots <directory>: isolated settings, sample layered paintings created by the real GPU engine, screenshots of real widgets/framebuffer, end-to-end gallery About/version/logo/link/Close verification.
+- Fresh Linux and Windows cross-builds are running. No build or publication is claimed complete yet.
+
+## Build environment
+Linux Qt 6.4.2 and host tools installed. Windows official Qt 6.4.3, MinGW GCC 13 POSIX and NSIS extracted in /tmp/impasto-windows-toolchain. Matching prior runtime stage available in original dist/windows-stage with Qt, compiler, WebP runtime and licenses. Rebuild executable and generated README, retain audited runtime files. Native Windows hardware/pressure/tilt/high-DPI verification remains future work; Wine is available for compatibility testing.
+
+## Step 3 — builds and screenshots
+- Linux Release compiled successfully. Initial product/About verification passed and four layered sample artworks were created. Visually inspected painting, gallery and About captures.
+- Windows cross-build configured with host Qt tool overrides plus QT_NO_PACKAGE_VERSION_CHECK=TRUE (Linux host 6.4.2 tools, Windows Qt 6.4.3); initial executable compiled. Final incremental compile includes dialog refinements and Escape check.
+- Full Linux engine/interchange checks are running; final screenshot checks, Linux DEB/AppImage packaging, and Flatpak builder inspection have started.
+
+## Step 4 — verification and packaging in progress
+- Full Linux engine test exited 0. Final Linux product/About check exited 0, including logo, version, stack, credit, both URLs, Close, Escape, and unchanged artwork. Fresh README screenshots copied to docs/product and provenance recorded there.
+- Windows final Release executable compiled and installed into a stage containing the prior verified Qt/compiler/WebP runtime. Product/About checks exited 0 under Wine and produced fresh screenshots showing 0.12.0.
+- DEB and Windows ZIP built. NSIS installer, AppImage and Flatpak are building. AppImage initially could not fetch its runtime inside restricted networking; downloaded official runtime with verified GitHub digest and added IMPASTO_APPIMAGE_RUNTIME support for offline packaging.
+- Recursive audit of 26 Windows PE files found no missing non-system dependencies; PE version resource contains 0.12.0. Evidence: work/validation/dll-audit.json.
+- Native Windows hardware validation remains unperformed.
+
+## Step 5 — packages built and deployment checks
+- Built all five 0.12.0 packages: Linux DEB, AppImage, Flatpak, Windows portable ZIP and NSIS installer. Windows ZIP integrity passed, and its executable/README match the fresh stage. DEB executable matches the tested Linux build byte-for-byte.
+- DEB and AppImage deployed product/About runs both returned 0. Flatpak staged app run on KDE Platform 6.10 returned 0; bundle import verification is in progress.
+- Full Linux interface suite repeated with a result receipt: exit 0 in 61 seconds, including painting/panels, gallery/recovery, layered files, animation and 3D references. Windows full engine test under Wine exited 0; full portable UI and installer checks are running.
+- Final screenshot provenance and local documentation links validated.
+
+## Step 6 — final validation
+- Full Windows portable UI suite: exit 0 in 75 seconds under Wine, from an extracted path containing spaces and é; 85 screenshots produced.
+- NSIS silent install, installed application/About run, and uninstall all returned 0. Installed executable matched the stage; external sample artwork was preserved byte-for-byte.
+- Flatpak bundle created and imported. Runtime/About check passed on KDE 6.10; actual bundle install/run/uninstall verification all returned 0.
+- AppStream metadata validation passed. Canonical CMake version matches latest AppStream release. All local README/guide links resolve. SHA-256 manifest and sidecars generated for all five downloads.
+
+## Step 7 — publication in progress
+All requested implementation and local verification are complete. Preparing one source commit and v0.12.0 tag, then a draft with the five verified packages and checksums. No new public release is claimed until GitHub publication and digest verification succeed.
+
+## Release next steps
+1. All validation is complete; commit source and tag v0.12.0.
+2. Push source/tag, upload all five packages plus checksums to a new draft, compare server digests, publish, verify public release.
+3. Record exact release commit/URL and fast-forward the original checkout safely; copy only new 0.12.0 packages to its dist folder.
+
+## Roadmap after release
+1. Test native Windows GPU drivers, tablet pressure/tilt/eraser, and multiple/high-DPI displays on physical hardware.
+2. Consider signing Windows packages and adding reproducible multi-platform CI.
+3. Keep package version, About, PE resources and generated README derived from CMake; add each new release to AppStream metadata.
+
+## Reproduction instructions for the next AI
+- Linux configure/build: `cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr`; `cmake --build build-release --parallel 4`.
+- Engine/UI checks: `build-release/impasto --selftest <output.png>`; `build-release/impasto --ui-shot <prefix>`; new product/About checks: `build-release/impasto --product-shots <directory>`. All use isolated settings. A desktop session with OpenGL 4.3 is required.
+- Linux packages: `packaging/build-packages.sh deb appimage flatpak`. Set `IMPASTO_APPIMAGE_RUNTIME` to a verified local runtime to avoid a runtime download; `CMAKE_BUILD_PARALLEL_LEVEL` defaults to 4.
+- Windows native build: `packaging/build-windows.ps1 -QtDir <Qt kit> -Installer -SelfTest`. See packaging/windows/BUILD.md.
+- Actual cross-build here: toolchain `/tmp/impasto-windows-toolchain/toolchain.cmake`, Windows prefix `/tmp/impasto-windows-toolchain/qt/6.4.3/mingw_64`, `QT_HOST_PATH=/usr`, `QT_HOST_PATH_CMAKE_DIR=/usr/lib/x86_64-linux-gnu/cmake`, host `Qt6CoreTools_DIR`, `Qt6GuiTools_DIR`, `Qt6WidgetsTools_DIR` under that same cmake directory, `QT_NO_PACKAGE_VERSION_CHECK=TRUE`, `IMPASTO_DEPLOY_QT=OFF`, and local `FETCHCONTENT_SOURCE_DIR_IMPASTO_ZLIB=/tmp/impasto-windows-toolchain/zlib-1.3.1`.
+- Cross-build directory is this chat's work/windows-build; package stage work/windows-stage. Runtime files reused from the prior audited stage, with freshly installed executable, README, and license files. CPack wrapper work/windows-package-config.cmake uses the extracted NSIS and host-compatible template under /tmp/impasto-windows-toolchain/cpack.
+- Wine tests use the disposable prefix `/tmp/impasto-windows-toolchain/wineprefix`, never the user's normal Wine profile. Evidence and receipts are under this chat's work/validation. Screenshots and reproduction notes are committed in docs/product.
+
+## Prior port history
+The previous Windows implementation and validation notes are preserved below as historical evidence. They describe 0.11.1, not proof of 0.12.0 verification.
+
 # Impasto Windows port
 
 ## Project
