@@ -5839,6 +5839,38 @@ int runUiShot(const QString& outPrefix)
         settle();
         check(QStringLiteral("press on the canvas closes the panel"), !layerList->isVisible());
 
+        // Qt 6.4 on native Wayland sends pen events with no keyboard modifiers.
+        // Ctrl or Shift held on the keyboard with Space must still zoom or turn.
+        {
+            auto key = [&](QEvent::Type t, int k, Qt::KeyboardModifiers m) {
+                QKeyEvent ev(t, k, m);
+                QCoreApplication::sendEvent(view, &ev);
+            };
+            auto viewDrag = [&](Qt::Key modifierKey, Qt::KeyboardModifier modifier) {
+                key(QEvent::KeyPress, modifierKey, modifier);
+                key(QEvent::KeyPress, Qt::Key_Space, modifier);
+                penWindow(QEvent::TabletPress, QPointF(700, 600), 0.4, Qt::LeftButton, Qt::LeftButton);
+                for (int i = 1; i <= 12; ++i)
+                    penWindow(QEvent::TabletMove, QPointF(700 + i * 12, 600 - i * 10), 0.5, Qt::NoButton, Qt::LeftButton);
+                penWindow(QEvent::TabletRelease, QPointF(844, 480), 0.0, Qt::LeftButton, Qt::NoButton);
+                key(QEvent::KeyRelease, Qt::Key_Space, modifier);
+                key(QEvent::KeyRelease, modifierKey, Qt::NoModifier);
+                settle();
+            };
+            const int strokesBefore = engine.history().undoCount();
+            const double zoomBefore = view->zoom();
+            viewDrag(Qt::Key_Control, Qt::ControlModifier);
+            check(QStringLiteral("Ctrl + Space + pen drag zooms, with no modifiers on the pen events"),
+                  std::abs(view->zoom() - zoomBefore) > 1e-3 && engine.history().undoCount() == strokesBefore);
+            const double turnBefore = view->rotation();
+            viewDrag(Qt::Key_Shift, Qt::ShiftModifier);
+            check(QStringLiteral("Shift + Space + pen drag turns the canvas, with no modifiers on the pen events"),
+                  std::abs(view->rotation() - turnBefore) > 1e-3 && engine.history().undoCount() == strokesBefore);
+            view->resetRotation();
+            view->fitToView();
+            settle();
+        }
+
         while (engine.history().undoCount() > undoBase)
             engine.undo(true);
         for (const QString& line : log)

@@ -64,6 +64,10 @@ cmake --build build
 ./build/impasto               # optionally pass an .imp, .psd, .ora or image file to open
 ```
 
+On a Wayland desktop Impasto runs through XWayland, so the desktop draws its
+title bar and fullscreen and the pen's keys work as on X11. `IMPASTO_WAYLAND=1`
+(or setting `QT_QPA_PLATFORM` yourself) keeps it on native Wayland.
+
 To add it to the application menu for your user:
 
 ```bash

@@ -1,3 +1,13 @@
+# Impasto 0.12.1 — Wayland fix (2026-11-01)
+
+Linux-only patch release: https://github.com/ozzy-apps/impasto/releases/tag/v0.12.1. Windows stays on 0.12.0 (the change does not touch Windows behaviour, and the cross toolchain in `/tmp` is gone).
+
+- On a Wayland desktop with `DISPLAY` set, `src/main.cpp` sets `QT_QPA_PLATFORM=xcb` before Qt starts. Qt 6.4's native Wayland gave a title bar the pen could not use, flickering F11 and pen events without Ctrl/Shift. `IMPASTO_WAYLAND=1` or a user-set `QT_QPA_PLATFORM` keeps native Wayland. The Flatpak now has `--socket=x11` (was `fallback-x11`) so it gets XWayland too.
+- `CanvasWidget` tracks Ctrl itself (as Shift/Alt already were) and adds held keys to pen events, so Ctrl/Shift + Space + pen drag zoom/rotate also on native Wayland. The UI run checks this with modifier-less pen events.
+- Confirmed by the user with the real pen on Wayland. Packages: DEB, AppImage, Flatpak.
+
+---
+
 # Impasto 0.12.0 — handoff
 
 ## Current status

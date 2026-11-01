@@ -520,7 +520,16 @@ void CanvasWidget::tabletEvent(QTabletEvent* e)
     in.tiltX = float(e->xTilt());
     in.tiltY = float(e->yTilt());
     in.button = e->button();
+    // Qt 6.4 on native Wayland sends pen events without the keyboard's
+    // modifiers, so Ctrl and Shift held for zoom and rotate went unseen.
+    // The keys the canvas saw go down count as well.
     in.mods = e->modifiers();
+    if (m_ctrl)
+        in.mods |= Qt::ControlModifier;
+    if (m_shift)
+        in.mods |= Qt::ShiftModifier;
+    if (m_alt)
+        in.mods |= Qt::AltModifier;
     in.eraserEnd = e->pointerType() == QPointingDevice::PointerType::Eraser;
 
     // Qt keeps sending pen events to whichever widget took the last press until
@@ -1060,6 +1069,9 @@ void CanvasWidget::keyPressEvent(QKeyEvent* e)
         m_alt = true;
         update();
         return;
+    case Qt::Key_Control:
+        m_ctrl = true;
+        break;
     case Qt::Key_Shift:
         // Shift makes a held shape perfect, like a second finger in Procreate.
         m_shift = true;
@@ -1114,6 +1126,8 @@ void CanvasWidget::keyReleaseEvent(QKeyEvent* e)
         update();
         return;
     }
+    if (e->key() == Qt::Key_Control)
+        m_ctrl = false;
     if (e->key() == Qt::Key_Shift) {
         m_shift = false;
         if (m_drag == Drag::Stroke && m_shape.snapped)
@@ -1127,6 +1141,7 @@ void CanvasWidget::focusOutEvent(QFocusEvent* e)
     m_space = false;
     m_alt = false;
     m_shift = false;
+    m_ctrl = false;
     updateCursorShape();
     update();
     QOpenGLWidget::focusOutEvent(e);

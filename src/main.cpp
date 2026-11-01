@@ -45,8 +45,26 @@ static void carryOverFromSketchbook()
         st.setValue(QStringLiteral("gallery/folder"), oldGallery);
 }
 
+// On a Wayland desktop, run through XWayland when it is there. Qt 6.4's own
+// Wayland support draws a title bar the pen cannot use, flickers instead of
+// going fullscreen, and drops Ctrl and Shift from pen events. Through XWayland
+// the desktop draws the title bar and the pen keeps pressure, tilt and keys.
+// IMPASTO_WAYLAND=1 (or setting QT_QPA_PLATFORM) keeps native Wayland.
+static void preferXWayland()
+{
+#if defined(Q_OS_LINUX)
+    if (qEnvironmentVariableIsSet("QT_QPA_PLATFORM") || qEnvironmentVariableIntValue("IMPASTO_WAYLAND"))
+        return;
+    const bool wayland = qEnvironmentVariableIsSet("WAYLAND_DISPLAY")
+                         || qgetenv("XDG_SESSION_TYPE") == "wayland";
+    if (wayland && qEnvironmentVariableIsSet("DISPLAY"))
+        qputenv("QT_QPA_PLATFORM", "xcb");
+#endif
+}
+
 int main(int argc, char** argv)
 {
+    preferXWayland();
     QSurfaceFormat fmt;
     fmt.setVersion(4, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);

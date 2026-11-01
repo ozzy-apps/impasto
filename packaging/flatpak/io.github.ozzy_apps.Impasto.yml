@@ -6,7 +6,7 @@ command: impasto
 finish-args:
   - --share=ipc
   - --socket=wayland
-  - --socket=fallback-x11
+  - --socket=x11
   - --device=dri
   # The gallery lives in the Pictures folder; anything else goes through the file portal.
   - --filesystem=xdg-pictures

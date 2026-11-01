@@ -47,6 +47,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.12.1" date="2026-11-01">
+      <description>
+        <p>Works on Wayland desktops: Impasto runs through XWayland, so the title bar, fullscreen and the pen work. Holding Ctrl or Shift with Space zooms and turns the canvas with the pen again.</p>
+      </description>
+    </release>
     <release version="0.12.0" date="2026-10-25">
       <description>
         <p>A unified Linux and Windows release, with an About dialog in the gallery and updated product screenshots.</p>

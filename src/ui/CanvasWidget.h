@@ -335,7 +335,7 @@ private:
     Drag m_drag = Drag::None;
     QPointF m_dragStart, m_panStart;   // device px
     double m_zoomStart = 1.0, m_rotStart = 0.0;
-    bool m_space = false, m_alt = false, m_shift = false;
+    bool m_space = false, m_alt = false, m_shift = false, m_ctrl = false;
     bool m_eyedropperArmed = false;
     QPointF m_cursor;
     bool m_cursorInside = false;
