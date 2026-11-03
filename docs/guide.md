@@ -295,7 +295,9 @@ that script for what it needs).
   figure's skeleton into it from its shape (standing, arms out or down),
   shows the joints to be checked from the front and the side (a joint moved
   moves its twin on the other side), and *Bind* ties the surface to the
-  bones, blended where they meet. It then poses like the figure, named poses
+  bones, blended where they meet. On a model that came rigged with bones named
+  as Mixamo names them, *Rig* reads the joints off its own skeleton instead,
+  and *Bind* gives it the figure's in place of its own. It then poses like the figure, named poses
   included, and opens rigged the next time. *Figures* lists the people to
   choose from: the mannequin, a woman that comes with Impasto, and any rigged
   model kept with *Keep*, which stays among them for good. *Turn* goes round it, *Light* moves the light, *Hard light*

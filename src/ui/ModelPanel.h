@@ -59,6 +59,7 @@ private:
     QWidget* m_rigRow;
     IconButton* m_rigMirror;
     std::vector<QVector3D> m_rigBefore;   // a re-rig cancelled goes back to these
+    bool m_rigHadSkeleton = false;        // rigging a model that came with a skeleton of its own
     IconButton* m_hard;
     IconButton* m_floor;
     IconButton* m_pick;

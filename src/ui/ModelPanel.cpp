@@ -90,7 +90,7 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
     m_tuneRow = new QWidget(this);
     auto* tuneRow = new QHBoxLayout(m_tuneRow);
     tuneRow->setContentsMargins(0, 0, 0, 0);
-    m_rigBtn = textButton(tr("Rig"), tr("Give a model without joints a skeleton, so that it can be posed"), "model-rig");
+    m_rigBtn = textButton(tr("Rig"), tr("Give a model without joints a skeleton, so that it can be posed; a rigged one gets the figure's skeleton in place of its own"), "model-rig");
     tuneRow->addWidget(m_rigBtn);
     m_keepBtn = textButton(tr("Keep"), tr("Keep this rigged model among the figures, to choose again any time"), "model-keep");
     tuneRow->addWidget(m_keepBtn);
@@ -291,8 +291,18 @@ bool ModelPanel::startRig()
     if (!m || m->figure)
         return false;
     m_rigBefore.clear();
+    m_rigHadSkeleton = false;
     std::vector<QVector3D> joints;
-    if (!m->canRig()) {
+    if (!m->canRig() && m->rig.empty() && !m->skins.empty()) {
+        // Rigged elsewhere: the joints from its own skeleton, which the figure's replaces.
+        QString why;
+        if (!m->rigFromSkeleton(&joints, &why)) {
+            emit message(why);
+            return false;
+        }
+        m->dropSkeleton();
+        m_rigHadSkeleton = !m->path.isEmpty();
+    } else if (!m->canRig()) {
         // Rigged here before: back to the model as it came, with the joints it had.
         if (m->rig.empty() || m->path.isEmpty())
             return false;
@@ -330,6 +340,17 @@ bool ModelPanel::finishRig(bool bind)
     bool bound = false;
     if (!joints.empty() && m && m->canRig())
         bound = m->bindRig(joints);
+    if (!bind && m_rigHadSkeleton && m) {
+        // Cancelled: back to the model with the skeleton it came with.
+        auto fresh = std::make_unique<Model3D>();
+        QString error;
+        if (Model3D::load(m->path, fresh.get(), &error))
+            m_view->setModel(std::move(fresh));
+        else
+            emit message(error);
+        m = m_view->model();
+    }
+    m_rigHadSkeleton = false;
     if (bind && bound) {
         // Kept for the file, so that it opens posable next time.
         QSettings st;
@@ -443,7 +464,7 @@ void ModelPanel::sync()
     m_rigMirror->setActive(m_view->rigMirror());
     const bool riggedHere = m && !m->figure && !m->rig.empty();
     m_keepBtn->setVisible(riggedHere && !figures::isFigure(m->path) && !rigging);
-    m_rigBtn->setVisible(m && !m->figure && (m->canRig() || riggedHere));
+    m_rigBtn->setVisible(m && !m->figure && (m->canRig() || riggedHere || (m->rig.empty() && m->rigFromSkeleton(nullptr, nullptr))));
     m_rigBtn->setText(riggedHere ? tr("Re-rig") : tr("Rig"));
     m_twist->setActive(m_view->twist());
     m_twist->setEnabled(m && !m->handles.empty());

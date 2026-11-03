@@ -119,6 +119,13 @@ public:
     // A first guess from the shape: a person standing upright, arms out or
     // down at the sides. False, with the reason, when it does not look like one.
     bool fitRig(std::vector<QVector3D>* joints, QString* why) const;
+    // The joints read off a skeleton the model came with, when its bones are
+    // named as Mixamo names them (Hips, Spine, LeftArm, LeftUpLeg and so on,
+    // any prefix before a colon ignored). False, with the reason, when they are not.
+    bool rigFromSkeleton(std::vector<QVector3D>* joints, QString* why) const;
+    // Lets go of the skeleton it came with, its meshes left as they were bound,
+    // so that the figure's can be bound to it instead (canRig() then holds).
+    void dropSkeleton();
     // Gives it those joints and binds every point of its surface to the bones
     // nearest it, blended where two meet. It keeps the pose it was in.
     bool bindRig(const std::vector<QVector3D>& joints);

@@ -3570,7 +3570,14 @@ int runMakeFigure(const QString& modelPath, const QString& outGlb, const QString
             joints.emplace_back(saved[i].toFloat(), saved[i + 1].toFloat(), saved[i + 2].toFloat());
         qInfo().noquote() << (joints.size() == 22 ? "joints from the settings file" : "no joints for it in the settings file: fitting");
     }
-    if (joints.size() != 22 && !model.fitRig(&joints, &error)) {
+    if (joints.size() != 22 && !model.skins.empty()) {
+        // Rigged already: its own skeleton says where the joints are.
+        if (!model.rigFromSkeleton(&joints, &error)) {
+            qCritical().noquote() << "no joints from its skeleton:" << error;
+            return 1;
+        }
+        qInfo().noquote() << "joints from its skeleton";
+    } else if (joints.size() != 22 && !model.fitRig(&joints, &error)) {
         qCritical().noquote() << "no fit:" << error;
         return 1;
     }
@@ -3610,7 +3617,14 @@ int runRigCheck(const QString& path, const QString& outPrefix)
         return 1;
     }
     std::vector<QVector3D> joints;
-    if (!model->fitRig(&joints, &error)) {
+    if (!model->skins.empty()) {
+        if (!model->rigFromSkeleton(&joints, &error)) {
+            qCritical().noquote() << "no joints from its skeleton:" << error;
+            return 1;
+        }
+        qInfo().noquote() << "joints from its skeleton";
+        model->dropSkeleton();
+    } else if (!model->fitRig(&joints, &error)) {
         qCritical().noquote() << "no fit:" << error;
         return 1;
     }
@@ -3804,6 +3818,83 @@ static bool runModelTests(const QString& outPath)
     }
     check(QStringLiteral("3D: a rigged glTF (buffer inside) and the same as GLB open with one joint to take hold of; turned, the upper bone swings and the skin follows"),
           gltfOk && glbOk && bent);
+
+    // A model that came rigged, its bones named as Mixamo names them: the
+    // joints are read off its skeleton, where the surface was bound, and the
+    // figure's skeleton binds in its place.
+    {
+        Model3D named = Model3D::makeFigure();
+        named.figure = false;
+        auto id = [&](const char* name) {
+            for (size_t i = 0; i < named.nodes.size(); ++i)
+                if (named.nodes[i].name == QLatin1String(name))
+                    return int(i);
+            return -1;
+        };
+        auto end = [&](const char* name, int parent, const QVector3D& at) {
+            ModelNode n;
+            n.name = QLatin1String(name);
+            n.parent = parent;
+            n.translation = at;
+            named.nodes.push_back(n);
+            return int(named.nodes.size()) - 1;
+        };
+        // Skinned the way a file is: every point in one space, each bound to its bone.
+        {
+            const auto rest = named.worldTransforms();
+            ModelSkin skin;
+            for (size_t n = 0; n < named.nodes.size(); ++n) {
+                skin.joints.push_back(int(n));
+                skin.inverseBind.push_back(rest[n].inverted());
+            }
+            for (ModelInstance& inst : named.instances) {
+                ModelMesh& mesh = named.meshes[size_t(inst.mesh)];
+                for (QVector3D& p : mesh.positions)
+                    p = rest[size_t(inst.node)].map(p);
+                for (QVector3D& nrm : mesh.normals)
+                    nrm = rest[size_t(inst.node)].mapVector(nrm).normalized();
+                mesh.joints.assign(mesh.positions.size(), {inst.node, 0, 0, 0});
+                mesh.weights.assign(mesh.positions.size(), {1.0f, 0.0f, 0.0f, 0.0f});
+                inst.skin = 0;
+            }
+            named.skins = {skin};
+            named.finish();
+        }
+        const int top = end("mixamorig:HeadTop_End", id("head"), {0, 0.24f, 0});
+        const int tipL = end("mixamorig:LeftHandMiddle4", id("hand.L"), {0, -0.17f, 0}), tipR = end("mixamorig:RightHandMiddle4", id("hand.R"), {0, -0.17f, 0});
+        const int toeL = end("mixamorig:LeftToe_End", id("foot.L"), {0, -0.05f, 0.17f}), toeR = end("mixamorig:RightToe_End", id("foot.R"), {0, -0.05f, 0.17f});
+        const std::vector<int> order = {id("hips"), id("spine"), id("chest"), id("neck"), id("head"), top,
+                                        id("upperarm.L"), id("forearm.L"), id("hand.L"), tipL, id("upperarm.R"), id("forearm.R"), id("hand.R"), tipR,
+                                        id("thigh.L"), id("shin.L"), id("foot.L"), toeL, id("thigh.R"), id("shin.R"), id("foot.R"), toeR};
+        const auto w = named.worldTransforms();
+        std::vector<QVector3D> expected;
+        for (int n : order)
+            expected.push_back(named.jointPosition(n, w));
+        const std::pair<const char*, const char*> renames[] = {
+            {"hips", "mixamorig:Hips"}, {"spine", "mixamorig:Spine"}, {"chest", "mixamorig:Spine2"}, {"neck", "mixamorig:Neck"}, {"head", "mixamorig:Head"},
+            {"upperarm.L", "mixamorig:LeftArm"}, {"forearm.L", "mixamorig:LeftForeArm"}, {"hand.L", "mixamorig:LeftHand"},
+            {"upperarm.R", "mixamorig:RightArm"}, {"forearm.R", "mixamorig:RightForeArm"}, {"hand.R", "mixamorig:RightHand"},
+            {"thigh.L", "mixamorig:LeftUpLeg"}, {"shin.L", "mixamorig:LeftLeg"}, {"foot.L", "mixamorig:LeftFoot"},
+            {"thigh.R", "mixamorig:RightUpLeg"}, {"shin.R", "mixamorig:RightLeg"}, {"foot.R", "mixamorig:RightFoot"}};
+        for (const auto& [from, to] : renames)
+            named.nodes[size_t(id(from))].name = QLatin1String(to);
+        std::vector<QVector3D> joints;
+        QString why;
+        const bool read = !named.canRig() && named.rigFromSkeleton(&joints, &why) && joints.size() == expected.size();
+        float worst = 0.0f, topOff = 0.0f;
+        if (read) {
+            for (size_t i = 0; i < joints.size(); ++i)
+                (i == 5 ? topOff : worst) = std::max(i == 5 ? topOff : worst, (joints[i] - expected[i]).length());
+        }
+        named.dropSkeleton();
+        const bool bound = read && named.canRig() && named.bindRig(joints) && named.humanoid;
+        QVector3D blo, bhi;
+        named.applyFigurePose(QStringLiteral("Walk"));
+        const bool walks = bound && named.bounds(&blo, &bhi) && bhi.y() > 1.5f && bhi.z() - blo.z() > 0.5f;
+        check(QStringLiteral("3D: a model rigged with Mixamo's bone names gives its joints from the skeleton (%6within %1 mm; the crown lifted %2 cm to the top of the head), lets it go, binds the figure's (%3), and walks (%4 m tall, %5 m deep)")
+                  .arg(worst * 1000.0f, 0, 'f', 1).arg(topOff * 100.0f, 0, 'f', 1).arg(bound).arg(bhi.y() - blo.y(), 0, 'f', 2).arg(bhi.z() - blo.z(), 0, 'f', 2).arg(read ? QString() : why + QStringLiteral("; ")),
+              read && worst < 0.002f && topOff < 0.08f && bound && walks);
+    }
 
     // The figure: a person's height, standing on the floor, with its handles.
     Model3D figure = Model3D::makeFigure();

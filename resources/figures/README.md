@@ -13,7 +13,10 @@ Bind), then make the pair from it and list both files in `resources.qrc`:
 ```
 
 The settings file is where the Rig button kept the joints; without it the
-joints are fitted afresh. A figure kept with *Keep* in the panel goes to
+joints are fitted afresh. A model that came rigged, with its bones named as
+Mixamo names them (`Hips`, `Spine`, `LeftArm`, `LeftUpLeg` and so on, any
+`mixamorig:` prefix ignored), needs no settings file: the joints are read off
+its skeleton, which the figure's then replaces. A figure kept with *Keep* in the panel goes to
 `~/.local/share/Impasto/Impasto/figures` in the same form, and shows without
 rebuilding anything.
 

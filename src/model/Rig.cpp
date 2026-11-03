@@ -746,3 +746,158 @@ bool Model3D::saveGlb(const QString& path, QString* error) const
     return true;
 }
 
+
+// ------------------------------------------------- a skeleton it came with
+
+namespace {
+
+// A bone's name as Mixamo would write it: lower case, without the prefix
+// before a colon ("mixamorig:") and without spaces, dots or underscores.
+QString plainBoneName(QString name)
+{
+    const int colon = name.lastIndexOf(QLatin1Char(':'));
+    if (colon >= 0)
+        name = name.mid(colon + 1);
+    QString out;
+    for (const QChar& c : name.toLower()) {
+        if (c.isLetterOrNumber())
+            out += c;
+    }
+    return out;
+}
+
+} // namespace
+
+bool Model3D::rigFromSkeleton(std::vector<QVector3D>* out, QString* why) const
+{
+    auto fail = [&](const QString& text) {
+        if (why)
+            *why = text;
+        return false;
+    };
+    if (skins.empty() || figure)
+        return fail(QObject::tr("The model came without a skeleton"));
+
+    // Where each node stands as the surface was bound to it: from the skin's
+    // bind matrices where it has them, else from the nodes at rest.
+    const std::vector<QMatrix4x4> world = worldTransforms();
+    std::vector<QVector3D> at(nodes.size());
+    for (size_t n = 0; n < nodes.size(); ++n)
+        at[n] = world[n].column(3).toVector3D();
+    for (const ModelSkin& s : skins) {
+        bool bound = false;
+        for (const QMatrix4x4& m : s.inverseBind)
+            bound = bound || !m.isIdentity();
+        if (!bound)
+            continue;
+        for (size_t j = 0; j < s.joints.size() && j < s.inverseBind.size(); ++j) {
+            const int n = s.joints[j];
+            if (n >= 0 && n < int(nodes.size()))
+                at[size_t(n)] = s.inverseBind[j].inverted().column(3).toVector3D();
+        }
+    }
+    QHash<QString, int> byName;
+    for (size_t n = 0; n < nodes.size(); ++n) {
+        const QString plain = plainBoneName(nodes[n].name);
+        if (!plain.isEmpty() && !byName.contains(plain))
+            byName.insert(plain, int(n));
+    }
+    auto find = [&](const QStringList& names) {
+        for (const QString& n : names) {
+            const auto it = byName.constFind(n);
+            if (it != byName.constEnd())
+                return *it;
+        }
+        return -1;
+    };
+    // Named for a side: "leftarm", "upperarm.L", "L_thigh" and the like.
+    auto sided = [](const QStringList& bases, int side) {
+        const QString word = side == 0 ? QStringLiteral("left") : QStringLiteral("right");
+        const QString letter = side == 0 ? QStringLiteral("l") : QStringLiteral("r");
+        QStringList out;
+        for (const QString& b : bases)
+            out << word + b << b + word << b + letter << letter + b;
+        return out;
+    };
+
+    const QStringList names = rigJointNames();
+    std::vector<QVector3D> J(JointCount);
+    std::vector<bool> have(JointCount, false);
+    auto take = [&](int joint, const QStringList& candidates) {
+        const int n = find(candidates);
+        if (n < 0)
+            return false;
+        J[size_t(joint)] = at[size_t(n)];
+        have[size_t(joint)] = true;
+        return true;
+    };
+    take(Hips, {QStringLiteral("hips"), QStringLiteral("pelvis")});
+    take(Spine, {QStringLiteral("spine"), QStringLiteral("spine01"), QStringLiteral("spine1")});
+    take(Chest, {QStringLiteral("spine2"), QStringLiteral("spine02"), QStringLiteral("spine3"), QStringLiteral("spine03"), QStringLiteral("chest"), QStringLiteral("upperchest")});
+    take(Neck, {QStringLiteral("neck"), QStringLiteral("neck1"), QStringLiteral("neck01")});
+    take(Head, {QStringLiteral("head")});
+    take(HeadTop, {QStringLiteral("headtopend"), QStringLiteral("headtop"), QStringLiteral("headend")});
+    for (int side = 0; side < 2; ++side) {
+        const int arm = side == 0 ? ShoulderL : ShoulderR, leg = side == 0 ? HipL : HipR;
+        take(arm, sided({QStringLiteral("arm"), QStringLiteral("upperarm"), QStringLiteral("shoulder")}, side));
+        take(arm + 1, sided({QStringLiteral("forearm"), QStringLiteral("lowerarm")}, side));
+        take(arm + 2, sided({QStringLiteral("hand"), QStringLiteral("wrist")}, side));
+        take(arm + 3, sided({QStringLiteral("handmiddle4"), QStringLiteral("handmiddle3"), QStringLiteral("handindex4"), QStringLiteral("handindex3"), QStringLiteral("handmiddle2")}, side));
+        take(leg, sided({QStringLiteral("upleg"), QStringLiteral("thigh"), QStringLiteral("upperleg")}, side));
+        take(leg + 1, sided({QStringLiteral("leg"), QStringLiteral("calf"), QStringLiteral("shin"), QStringLiteral("lowerleg")}, side));
+        take(leg + 2, sided({QStringLiteral("foot"), QStringLiteral("ankle")}, side));
+        take(leg + 3, sided({QStringLiteral("toeend"), QStringLiteral("toebase"), QStringLiteral("toe"), QStringLiteral("toes"), QStringLiteral("ball")}, side));
+    }
+    // The ends a skeleton may leave out, carried on from the bone before them.
+    if (!have[HeadTop] && have[Head] && have[Neck]) {
+        J[HeadTop] = J[Head] + (J[Head] - J[Neck]) * 2.0f;
+        have[HeadTop] = true;
+    }
+    for (int side = 0; side < 2; ++side) {
+        const int wrist = side == 0 ? WristL : WristR;
+        if (!have[size_t(wrist + 1)] && have[size_t(wrist)] && have[size_t(wrist - 1)]) {
+            J[size_t(wrist + 1)] = J[size_t(wrist)] + (J[size_t(wrist)] - J[size_t(wrist - 1)]) * 0.7f;
+            have[size_t(wrist + 1)] = true;
+        }
+    }
+    for (int j = 0; j < JointCount; ++j) {
+        if (!have[size_t(j)])
+            return fail(QObject::tr("The skeleton has no bone named for the %1").arg(names[j].toLower()));
+    }
+    // The crown: a skeleton's head ends under the hair, the figure's at the top.
+    QVector3D lo, hi;
+    if (bounds(&lo, &hi) && hi.y() > J[HeadTop].y() && hi.y() - J[HeadTop].y() < (J[HeadTop].y() - J[Neck].y()))
+        J[HeadTop].setY(hi.y());
+    if (!(J[Neck].y() > J[Hips].y() && J[KneeL].y() < J[HipL].y() && J[KneeR].y() < J[HipR].y()))
+        return fail(QObject::tr("Rigging needs a person standing upright, head up"));
+    if (out)
+        *out = J;
+    return true;
+}
+
+void Model3D::dropSkeleton()
+{
+    if (skins.empty())
+        return;
+    // A skinned mesh's points are where they were bound, which is where the
+    // skin left them at rest; a fixed mesh keeps hanging from its node.
+    for (ModelInstance& inst : instances) {
+        if (inst.skin >= 0) {
+            inst.skin = -1;
+            inst.node = -1;
+        }
+    }
+    for (ModelMesh& m : meshes) {
+        m.joints.clear();
+        m.weights.clear();
+    }
+    skins.clear();
+    handles.clear();
+    humanoid = false;
+    rig.clear();
+    for (ModelNode& n : nodes) {
+        n.pose = QQuaternion();
+        n.offset = QVector3D();
+    }
+    finish();
+}
