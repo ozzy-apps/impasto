@@ -47,6 +47,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.13.0" date="2026-11-04">
+      <description>
+        <p>The 3D model is placed live on the canvas: it sits in a frame of its own where it can still be turned, posed and lit, the frame moved, sized or cropped, until Apply makes a layer of it.</p>
+      </description>
+    </release>
     <release version="0.12.1" date="2026-11-01">
       <description>
         <p>Works on Wayland desktops: Impasto runs through XWayland, so the title bar, fullscreen and the pen work. Holding Ctrl or Shift with Space zooms and turns the canvas with the pen again.</p>

@@ -21,13 +21,13 @@
 
 ## Make yourself at home
 
-**Version 0.12.1** fixes the title bar, fullscreen and pen zoom and rotate on Wayland desktops. Windows stays on 0.12.0, which this fix does not affect.
+**Version 0.13.0** places the 3D model live on the canvas, in a frame where it can still be turned, posed and lit before it becomes a layer. Linux only for now; Windows stays on 0.12.0.
 
 | Platform | Download | Start painting |
 | --- | --- | --- |
 | Windows 10 / 11, 64-bit | [Installer](https://github.com/ozzy-apps/impasto/releases/download/v0.12.0/Impasto-0.12.0-windows-x64.exe) · [Portable ZIP](https://github.com/ozzy-apps/impasto/releases/download/v0.12.0/Impasto-0.12.0-windows-x64.zip) | Install, or extract the whole ZIP and open `impasto.exe`. |
-| Ubuntu 24.04 / compatible, x86-64 | [DEB](https://github.com/ozzy-apps/impasto/releases/download/v0.12.1/impasto_0.12.1_amd64.deb) | Install with your package manager. |
-| Linux, x86-64 | [AppImage](https://github.com/ozzy-apps/impasto/releases/download/v0.12.1/Impasto-0.12.1-x86_64.AppImage) · [Flatpak](https://github.com/ozzy-apps/impasto/releases/download/v0.12.1/Impasto-0.12.1.flatpak) | Make the AppImage executable, or install the Flatpak bundle. |
+| Ubuntu 24.04 / compatible, x86-64 | [DEB](https://github.com/ozzy-apps/impasto/releases/download/v0.13.0/impasto_0.13.0_amd64.deb) | Install with your package manager. |
+| Linux, x86-64 | [AppImage](https://github.com/ozzy-apps/impasto/releases/download/v0.13.0/Impasto-0.13.0-x86_64.AppImage) · [Flatpak](https://github.com/ozzy-apps/impasto/releases/download/v0.13.0/Impasto-0.13.0.flatpak) | Make the AppImage executable, or install the Flatpak bundle. |
 
 Requires OpenGL 4.3 and a current graphics driver. Packages are unsigned. Windows builds are checked under Wine; physical tablet and native Windows hardware checks remain. Artworks save to Pictures/Impasto; choose another folder from the gallery menu.
 

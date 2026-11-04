@@ -1,6 +1,6 @@
-# 3D reference placed live on the canvas (2026-11-04)
+# Impasto 0.13.0 — the 3D model live on the canvas (2026-11-04)
 
-Unreleased, on `main`. *Place* in the 3D panel no longer drops a canvas-sized layer at once: it starts a placement session on the canvas, in the manner of Clip Studio's 3D layers.
+Linux-only release (DEB, AppImage, Flatpak): https://github.com/ozzy-apps/impasto/releases/tag/v0.13.0. Windows stays on 0.12.0 (the cross toolchain in `/tmp` is gone). *Place* in the 3D panel no longer drops a canvas-sized layer at once: it starts a placement session on the canvas, in the manner of Clip Studio's 3D layers.
 
 - `src/ui/CanvasModel.cpp` (new): the session. The panel's dashed frame lands in the middle of the canvas at seven tenths of its height; the model stays live inside it. A drag in the frame goes to the `ModelView` (turn, pose by joint, light, Shift to move the model); the frame's corners scale the picture (model with it), its sides crop or reveal the camera's view, its edge moves it, the wheel over it grows or shrinks it about the pen. Apply renders the part of the frame on the canvas at canvas pixels and adds it as the "3D reference" layer; Cancel leaves the artwork alone. The live picture is drawn by the panel's view into an FBO (at most 2048 px a side, as many as shown) at the start of `CanvasWidget::paintGL`, before the engine takes its own context.
 - `ModelView::Window`: the camera's full view (centre and height in some pixel space) and the frame shown of it, with an off-centre frustum, so the same posing code serves the panel (`panelWindow()`) and the canvas. `press`/`move`/`release` take a window; the mouse handlers call them with the panel's. `modelEdited()` now emits `edited()`.
