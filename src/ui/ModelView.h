@@ -24,7 +24,7 @@ public:
 
     void setModel(std::unique_ptr<Model3D> model);
     Model3D* model() const { return m_model.get(); }
-    void modelEdited();   // the pose changed from outside: draw it again
+    void modelEdited();   // the pose changed from outside: draw it again, and say so
 
     Mode mode() const { return m_mode; }
     void setMode(Mode mode);
@@ -60,6 +60,32 @@ public:
 
     // The model as it is shown, the size of the canvas, ready to be a layer.
     QImage renderImage(const QSize& size, bool transparent);
+
+    // The picture of the model somewhere, in that place's pixels: the frame
+    // it shows through, and the centre and height of the camera's whole view
+    // (what the lens sees, top to bottom). In the panel the frame is the whole
+    // of the view; on the canvas it is the frame the model is placed in, which
+    // may show only part of the view, or more than it.
+    struct Window {
+        QRectF rect;
+        QPointF centre;
+        double height = 1.0;
+        double hitRadius = 16.0;   // how near a handle a press must land
+    };
+    Window panelWindow() const;
+    // The frame of that window drawn at the given number of pixels, see-through
+    // round the model. Empty until the view has been shown once.
+    QImage render(const Window& w, const QSize& pixels, bool transparent);
+    QPointF project(const QVector3D& world, const Window& w) const;
+    QVector<QPointF> handlePositions(const Window& w) const;
+    // A press, drag and release in some window's pixels, doing what the mode
+    // says: turning, posing (by the handle under the press), lighting, or with
+    // the middle button or Shift moving the model about.
+    void press(const QPointF& pos, Qt::MouseButton button, Qt::KeyboardModifiers mods, const Window& w);
+    void move(const QPointF& pos, const Window& w);
+    void release();
+    int selectedHandle() const { return m_handle >= 0 ? m_handle : m_selected; }
+
     // For checks: where a point of the model and each handle are on screen.
     QPointF project(const QVector3D& world) const;
     QVector<QPointF> handlePositions() const;
@@ -70,6 +96,7 @@ signals:
     void colorPicked(const QColor& color);
     void edited();        // posed, turned or lit: worth remembering
     void pickingChanged(bool on);
+    void modeChanged(Mode mode);
 
 protected:
     void initializeGL() override;
@@ -89,14 +116,16 @@ private:
         std::shared_ptr<QOpenGLTexture> texture;
     };
     void upload();
-    void drawScene(double aspect, bool transparent);
+    void drawScene(const QMatrix4x4& projection, bool transparent);
     QMatrix4x4 viewMatrix() const;
-    QMatrix4x4 projection(double aspect) const;
+    QMatrix4x4 projection(const Window& w) const;
     QVector3D eye() const;
     double fovY() const;
     QRectF frameRect() const;   // the canvas's shape inside the view
-    int handleAt(const QPointF& pos) const;
-    void dragHandle(const QPointF& from, const QPointF& to);
+    int handleAt(const QPointF& pos, const Window& w) const;
+    void dragHandle(const QPointF& from, const QPointF& to, const Window& w);
+    // How far a point at that depth moves for one pixel of the window.
+    double perPixel(const QVector3D& at, const Window& w) const;
 
     std::unique_ptr<Model3D> m_model;
     std::vector<GpuPart> m_parts;

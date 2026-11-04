@@ -1,3 +1,14 @@
+# 3D reference placed live on the canvas (2026-11-04)
+
+Unreleased, on `main`. *Place* in the 3D panel no longer drops a canvas-sized layer at once: it starts a placement session on the canvas, in the manner of Clip Studio's 3D layers.
+
+- `src/ui/CanvasModel.cpp` (new): the session. The panel's dashed frame lands in the middle of the canvas at seven tenths of its height; the model stays live inside it. A drag in the frame goes to the `ModelView` (turn, pose by joint, light, Shift to move the model); the frame's corners scale the picture (model with it), its sides crop or reveal the camera's view, its edge moves it, the wheel over it grows or shrinks it about the pen. Apply renders the part of the frame on the canvas at canvas pixels and adds it as the "3D reference" layer; Cancel leaves the artwork alone. The live picture is drawn by the panel's view into an FBO (at most 2048 px a side, as many as shown) at the start of `CanvasWidget::paintGL`, before the engine takes its own context.
+- `ModelView::Window`: the camera's full view (centre and height in some pixel space) and the frame shown of it, with an off-centre frustum, so the same posing code serves the panel (`panelWindow()`) and the canvas. `press`/`move`/`release` take a window; the mouse handlers call them with the panel's. `modelEdited()` now emits `edited()`.
+- `MainWindow::startModelPlace`: the edit bar (`model-bar`): Turn/Pose/Light, Twist, Reset, Fit, Hard light, Cancel, Apply (`model-apply`), and a second row of the figure's poses for humanoid models. Enter/Esc apply/cancel; `editing()` covers it; every other canvas session refuses to start during it.
+- Checks: `IMPASTO_ONLY=model build/impasto --ui-shot out/ui` drives Place, a turn in the frame, a corner drag and Apply (captures `ui-model-placing.png`, `ui-model-placed.png`). Not driven: the wheel over the frame, side and edge drags, Shift-move, and the pen on the real display.
+
+---
+
 # Impasto 0.12.1 — Wayland fix (2026-11-01)
 
 Linux-only patch release: https://github.com/ozzy-apps/impasto/releases/tag/v0.12.1. Windows stays on 0.12.0 (the change does not touch Windows behaviour, and the cross toolchain in `/tmp` is gone).

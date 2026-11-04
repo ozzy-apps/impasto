@@ -18,7 +18,7 @@ void CanvasWidget::setTextMode(bool on)
     if (m_text.mode == on)
         return;
     if (on) {
-        if (m_tf.active || m_shape.editing || m_crop.active || m_liquify.active || m_engine->editActive() || m_drag != Drag::None
+        if (m_tf.active || m_model.active || m_shape.editing || m_crop.active || m_liquify.active || m_engine->editActive() || m_drag != Drag::None
             || !m_engine->hasDocument())
             return;
         setSelectMode(false);

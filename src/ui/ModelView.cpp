@@ -110,13 +110,17 @@ void ModelView::modelEdited()
 {
     m_dirty = true;
     update();
+    emit edited();
 }
 
 void ModelView::setMode(Mode mode)
 {
+    if (m_mode == mode)
+        return;
     m_mode = mode;
     m_selected = -1;
     update();
+    emit modeChanged(mode);
 }
 
 void ModelView::setHardLight(bool hard)
@@ -235,11 +239,29 @@ QMatrix4x4 ModelView::viewMatrix() const
     return v;
 }
 
-QMatrix4x4 ModelView::projection(double aspect) const
+// The camera's full view is `height` pixels tall about `centre`; the frame
+// is whatever part of that plane the window shows, so the frustum is cut to it.
+QMatrix4x4 ModelView::projection(const Window& w) const
 {
+    const double n = std::max(0.001, m_distance * 0.01), f = m_distance * 20.0 + m_size * 10.0;
+    const double t = std::tan(fovY() / 2.0) * n / (std::max(1e-6, w.height) / 2.0);   // on the near plane, per pixel
     QMatrix4x4 p;
-    p.perspective(float(fovY() / kDeg), float(aspect), float(std::max(0.001, m_distance * 0.01)), float(m_distance * 20.0 + m_size * 10.0));
+    p.frustum(float((w.rect.left() - w.centre.x()) * t), float((w.rect.right() - w.centre.x()) * t), float((w.centre.y() - w.rect.bottom()) * t),
+              float((w.centre.y() - w.rect.top()) * t), float(n), float(f));
     return p;
+}
+
+ModelView::Window ModelView::panelWindow() const
+{
+    const QRectF f = frameRect();
+    return {f, f.center(), std::max(1.0, f.height()), 16.0};
+}
+
+double ModelView::perPixel(const QVector3D& at, const Window& w) const
+{
+    const QVector3D forward = (m_target - eye()).normalized();
+    const double depth = std::max(0.001, double(QVector3D::dotProduct(at - eye(), forward)));
+    return 2.0 * depth * std::tan(fovY() / 2.0) / std::max(1.0, w.height);
 }
 
 QRectF ModelView::frameRect() const
@@ -255,15 +277,19 @@ QRectF ModelView::frameRect() const
     return QRectF(r.left(), r.center().y() - h / 2.0, r.width(), h);
 }
 
-QPointF ModelView::project(const QVector3D& world) const
+QPointF ModelView::project(const QVector3D& world, const Window& w) const
 {
-    // Through the frame's projection when there is one, as what is placed would see it.
-    const QRectF f = frameRect();
-    const QVector4D clip = projection(f.width() / std::max(1.0, f.height())) * viewMatrix() * QVector4D(world, 1.0f);
+    const QVector4D clip = projection(w) * viewMatrix() * QVector4D(world, 1.0f);
     if (clip.w() <= 1e-6f)
         return {-1e6, -1e6};
     const double x = clip.x() / clip.w(), y = clip.y() / clip.w();
-    return {f.left() + (x * 0.5 + 0.5) * f.width(), f.top() + (0.5 - y * 0.5) * f.height()};
+    return {w.rect.left() + (x * 0.5 + 0.5) * w.rect.width(), w.rect.top() + (0.5 - y * 0.5) * w.rect.height()};
+}
+
+QPointF ModelView::project(const QVector3D& world) const
+{
+    // Through the frame's projection when there is one, as what is placed would see it.
+    return project(world, panelWindow());
 }
 
 void ModelView::beginRig(const std::vector<QVector3D>& joints, bool facesAway)
@@ -293,15 +319,20 @@ QVector<QPointF> ModelView::rigPositions() const
     return out;
 }
 
-QVector<QPointF> ModelView::handlePositions() const
+QVector<QPointF> ModelView::handlePositions(const Window& w) const
 {
     QVector<QPointF> out;
     if (!m_model)
         return out;
     const std::vector<QMatrix4x4> world = m_model->worldTransforms();
     for (const ModelHandle& h : m_model->handles)
-        out.push_back(project(m_model->handlePosition(h, world)));
+        out.push_back(project(m_model->handlePosition(h, world), w));
     return out;
+}
+
+QVector<QPointF> ModelView::handlePositions() const
+{
+    return handlePositions(panelWindow());
 }
 
 // ------------------------------------------------------------------- GL
@@ -389,8 +420,8 @@ void ModelView::upload()
     m_floorCount = int(lines.size() / 3);
 }
 
-// The model and its floor, through a camera of the given shape, into whatever is bound.
-void ModelView::drawScene(double aspect, bool transparent)
+// The model and its floor, through the given camera, into whatever is bound.
+void ModelView::drawScene(const QMatrix4x4& projection, bool transparent)
 {
     if (!m_ready || !m_model)
         return;
@@ -402,7 +433,7 @@ void ModelView::drawScene(double aspect, bool transparent)
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_CULL_FACE);
     glDisable(GL_BLEND);
-    const QMatrix4x4 viewProj = projection(aspect) * viewMatrix();
+    const QMatrix4x4 viewProj = projection * viewMatrix();
     m_program.bind();
     m_program.setUniformValue("uViewProj", viewProj);
     m_program.setUniformValue("uLight", lightDirection());
@@ -449,7 +480,7 @@ void ModelView::paintGL()
     glViewport(fp.x(), fp.y(), fp.width(), fp.height());
     glClearColor(0.21f, 0.21f, 0.23f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    drawScene(f.width() / std::max(1.0, f.height()), false);
+    drawScene(projection(panelWindow()), false);
     glDisable(GL_SCISSOR_TEST);
 
     // Over it: the frame's edge, the joints to take hold of, where the light comes from.
@@ -502,13 +533,13 @@ void ModelView::paintGL()
 
 // --------------------------------------------------------------- input
 
-int ModelView::handleAt(const QPointF& pos) const
+int ModelView::handleAt(const QPointF& pos, const Window& w) const
 {
     if (!m_model)
         return -1;
-    const QVector<QPointF> at = handlePositions();
+    const QVector<QPointF> at = handlePositions(w);
     int best = -1;
-    double bestD = 16.0;
+    double bestD = w.hitRadius;
     for (int i = 0; i < at.size(); ++i) {
         const double d = QLineF(at[i], pos).length();
         if (d < bestD) {
@@ -519,19 +550,17 @@ int ModelView::handleAt(const QPointF& pos) const
     return best;
 }
 
-void ModelView::dragHandle(const QPointF& from, const QPointF& to)
+void ModelView::dragHandle(const QPointF& from, const QPointF& to, const Window& w)
 {
     const ModelHandle& h = m_model->handles[size_t(m_handle)];
     const std::vector<QMatrix4x4> world = m_model->worldTransforms();
     const QVector3D forward = (m_target - eye()).normalized();
     if (h.moves) {
         // The whole figure moves in the plane facing the view.
-        const QVector3D at = m_model->handlePosition(h, world);
-        const double depth = std::max(0.001, double(QVector3D::dotProduct(at - eye(), forward)));
-        const double perPixel = 2.0 * depth * std::tan(fovY() / 2.0) / std::max(1.0, frameRect().height());
+        const double step = perPixel(m_model->handlePosition(h, world), w);
         const QMatrix4x4 v = viewMatrix().inverted();
         const QVector3D right = v.mapVector(QVector3D(1, 0, 0)), up = v.mapVector(QVector3D(0, 1, 0));
-        m_model->moveRoot((right * float(to.x() - from.x()) - up * float(to.y() - from.y())) * float(perPixel));
+        m_model->moveRoot((right * float(to.x() - from.x()) - up * float(to.y() - from.y())) * float(step));
         return;
     }
     const QVector3D pivot = m_model->jointPosition(h.turns, world);
@@ -544,7 +573,7 @@ void ModelView::dragHandle(const QPointF& from, const QPointF& to)
         return;
     }
     // Round the joint, in the plane facing the view: the point follows the pen.
-    const QPointF c = project(pivot);
+    const QPointF c = project(pivot, w);
     const double a0 = std::atan2(from.y() - c.y(), from.x() - c.x()), a1 = std::atan2(to.y() - c.y(), to.x() - c.x());
     double delta = a1 - a0;
     while (delta > std::numbers::pi)
@@ -556,25 +585,17 @@ void ModelView::dragHandle(const QPointF& from, const QPointF& to)
     m_model->turnNode(h.turns, QQuaternion::fromAxisAndAngle(forward, float(delta / kDeg)));
 }
 
-void ModelView::mousePressEvent(QMouseEvent* e)
+void ModelView::press(const QPointF& pos, Qt::MouseButton button, Qt::KeyboardModifiers mods, const Window& w)
 {
-    m_last = e->position();
-    m_panning = e->button() == Qt::MiddleButton || (e->modifiers() & Qt::ShiftModifier);
-    if (m_picking && e->button() == Qt::LeftButton) {
-        const QImage shot = grabFramebuffer();
-        const QPoint px = (e->position() * devicePixelRatioF()).toPoint();
-        if (shot.rect().contains(px))
-            emit colorPicked(shot.pixelColor(px));
-        setPicking(false);
-        return;
-    }
+    m_last = pos;
+    m_panning = button == Qt::MiddleButton || (mods & Qt::ShiftModifier);
     m_rigJoint = -1;
     if (m_rigging && !m_panning) {
         // The nearest joint under the pen, if one is.
         const QVector<QPointF> at = rigPositions();
-        double best = 16.0;
+        double best = w.hitRadius;
         for (int i = 0; i < at.size(); ++i) {
-            const double d = QLineF(at[i], e->position()).length();
+            const double d = QLineF(at[i], pos).length();
             if (d < best) {
                 best = d;
                 m_rigJoint = i;
@@ -584,27 +605,21 @@ void ModelView::mousePressEvent(QMouseEvent* e)
         update();
         return;
     }
-    m_handle = (m_mode == Mode::Pose && !m_panning) ? handleAt(e->position()) : -1;
+    m_handle = (m_mode == Mode::Pose && !m_panning) ? handleAt(pos, w) : -1;
     if (m_handle >= 0) {
         m_selected = m_handle;
         update();
     }
 }
 
-void ModelView::mouseMoveEvent(QMouseEvent* e)
+void ModelView::move(const QPointF& pos, const Window& w)
 {
-    if (!(e->buttons() & (Qt::LeftButton | Qt::MiddleButton)))
-        return;
-    const QPointF pos = e->position();
     const QPointF d = pos - m_last;
     if (m_rigJoint >= 0) {
         // In the plane facing the view, and the same joint on the other side mirrored with it.
-        const QVector3D at = m_rig[size_t(m_rigJoint)];
-        const QVector3D forward = (m_target - eye()).normalized();
-        const double depth = std::max(0.001, double(QVector3D::dotProduct(at - eye(), forward)));
-        const double perPixel = 2.0 * depth * std::tan(fovY() / 2.0) / std::max(1.0, frameRect().height());
+        const double step = perPixel(m_rig[size_t(m_rigJoint)], w);
         const QMatrix4x4 v = viewMatrix().inverted();
-        const QVector3D move = (v.mapVector(QVector3D(1, 0, 0)) * float(d.x()) - v.mapVector(QVector3D(0, 1, 0)) * float(d.y())) * float(perPixel);
+        const QVector3D move = (v.mapVector(QVector3D(1, 0, 0)) * float(d.x()) - v.mapVector(QVector3D(0, 1, 0)) * float(d.y())) * float(step);
         m_rig[size_t(m_rigJoint)] += move;
         const int twin = Model3D::rigMirror(m_rigJoint);
         if (m_rigMirror && twin != m_rigJoint) {
@@ -613,12 +628,12 @@ void ModelView::mouseMoveEvent(QMouseEvent* e)
             m_rig[size_t(twin)] = QVector3D(2.0f * middle - p.x(), p.y(), p.z());
         }
     } else if (m_handle >= 0 && m_model) {
-        dragHandle(m_last, pos);
+        dragHandle(m_last, pos, w);
         m_dirty = true;
     } else if (m_panning) {
         const QMatrix4x4 v = viewMatrix().inverted();
-        const double perPixel = 2.0 * m_distance * std::tan(fovY() / 2.0) / std::max(1.0, frameRect().height());
-        m_target -= (v.mapVector(QVector3D(1, 0, 0)) * float(d.x()) - v.mapVector(QVector3D(0, 1, 0)) * float(d.y())) * float(perPixel);
+        const double step = perPixel(m_target, w);
+        m_target -= (v.mapVector(QVector3D(1, 0, 0)) * float(d.x()) - v.mapVector(QVector3D(0, 1, 0)) * float(d.y())) * float(step);
     } else if (m_mode == Mode::Light) {
         m_lightAz -= d.x() * 0.5;
         m_lightEl = std::clamp(m_lightEl - d.y() * 0.5, -85.0, 89.0);
@@ -630,7 +645,7 @@ void ModelView::mouseMoveEvent(QMouseEvent* e)
     update();
 }
 
-void ModelView::mouseReleaseEvent(QMouseEvent*)
+void ModelView::release()
 {
     if ((m_handle >= 0 || m_panning || m_mode != Mode::Pose) && !m_rigging)
         emit edited();
@@ -638,6 +653,31 @@ void ModelView::mouseReleaseEvent(QMouseEvent*)
     m_rigJoint = -1;
     m_panning = false;
     update();
+}
+
+void ModelView::mousePressEvent(QMouseEvent* e)
+{
+    if (m_picking && e->button() == Qt::LeftButton) {
+        const QImage shot = grabFramebuffer();
+        const QPoint px = (e->position() * devicePixelRatioF()).toPoint();
+        if (shot.rect().contains(px))
+            emit colorPicked(shot.pixelColor(px));
+        setPicking(false);
+        return;
+    }
+    press(e->position(), e->button(), e->modifiers(), panelWindow());
+}
+
+void ModelView::mouseMoveEvent(QMouseEvent* e)
+{
+    if (!(e->buttons() & (Qt::LeftButton | Qt::MiddleButton)))
+        return;
+    move(e->position(), panelWindow());
+}
+
+void ModelView::mouseReleaseEvent(QMouseEvent*)
+{
+    release();
 }
 
 void ModelView::wheelEvent(QWheelEvent* e)
@@ -649,7 +689,13 @@ void ModelView::wheelEvent(QWheelEvent* e)
 
 QImage ModelView::renderImage(const QSize& wanted, bool transparent)
 {
-    if (!m_model || wanted.isEmpty())
+    const QRectF whole(0.0, 0.0, double(wanted.width()), double(wanted.height()));
+    return render({whole, whole.center(), std::max(1.0, whole.height()), 16.0}, wanted, transparent);
+}
+
+QImage ModelView::render(const Window& w, const QSize& wanted, bool transparent)
+{
+    if (!m_model || !m_ready || wanted.isEmpty() || w.rect.isEmpty())
         return {};
     makeCurrent();
     GLint limit = 4096;
@@ -669,7 +715,7 @@ QImage ModelView::renderImage(const QSize& wanted, bool transparent)
     else
         glClearColor(0.21f, 0.21f, 0.23f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    drawScene(double(wanted.width()) / std::max(1, wanted.height()), transparent);
+    drawScene(projection(w), transparent);
     fbo.release();
     QImage image = fbo.toImage();
     doneCurrent();

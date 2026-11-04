@@ -17,7 +17,7 @@ void CanvasWidget::setSelectMode(bool on)
     if (m_drag == Drag::Flood)
         endFloodDrag(true);
     if (on) {
-        if (m_tf.active || m_shape.editing || m_engine->editActive() || m_drag != Drag::None)
+        if (m_tf.active || m_model.active || m_shape.editing || m_engine->editActive() || m_drag != Drag::None)
             return;
         armEyedropper(false);
         armFill(false);
@@ -121,7 +121,7 @@ constexpr double kThresholdSlack = 10.0;   // travel that is still just a tap
 
 bool CanvasWidget::beginFloodDrag(const QPointF& widgetPos, bool select, bool subtract, bool fromDrop)
 {
-    if (m_tf.active || m_shape.editing || m_engine->editActive() || m_engine->strokeActive() || m_engine->floodActive())
+    if (m_tf.active || m_model.active || m_shape.editing || m_engine->editActive() || m_engine->strokeActive() || m_engine->floodActive())
         return false;
     const QPointF c = widgetToCanvas(widgetPos);
     const QPoint px(int(std::floor(c.x())), int(std::floor(c.y())));
@@ -270,7 +270,7 @@ bool CanvasWidget::dropRelease(const QPointF& widgetPos, bool allowed)
 
 bool CanvasWidget::fillAt(const QPointF& widgetPos)
 {
-    if (m_tf.active || m_shape.editing || m_engine->editActive() || m_drag == Drag::Stroke)
+    if (m_tf.active || m_model.active || m_shape.editing || m_engine->editActive() || m_drag == Drag::Stroke)
         return false;
     const QPointF c = widgetToCanvas(widgetPos);
     const QPoint px(int(std::floor(c.x())), int(std::floor(c.y())));

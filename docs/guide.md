@@ -303,9 +303,17 @@ that script for what it needs).
   model kept with *Keep*, which stays among them for good. *Turn* goes round it, *Light* moves the light, *Hard light*
   shows it in two tones (the light and shadow shapes), and the lens goes from
   14 mm (strong perspective) to 200 mm (flat). A dashed frame shows what will
-  land on the canvas: *Place* puts the model there as a layer of its own to
-  draw over, and the eyedropper picks colours from it. The model, its pose,
-  the view and the light are kept between sessions.
+  land on the canvas: *Place* puts the model there, in a frame of its own in
+  the middle of the canvas, still live, as Clip Studio's 3D layers are. A
+  drag in the frame turns, poses or lights it as the bar below says (the
+  figure's named poses, *Twist*, *Reset*, *Fit* and *Hard light* are there
+  too); drag the frame's edge to move it, a corner to size it, the model with
+  it, a side to show more or less of the view, and the wheel over it to grow
+  or shrink it about the pen. *Apply* (Enter) draws the frame as a layer of
+  its own to draw over, at the canvas's own pixels; *Cancel* (Esc) leaves the
+  artwork untouched. The eyedropper in the panel picks colours from the
+  model. The model, its pose, the view and the light are kept between
+  sessions.
 - **Crash recovery**: unsaved work is copied aside every couple of minutes
   while the pen rests. If the app or the computer goes down, the next start
   offers it back.

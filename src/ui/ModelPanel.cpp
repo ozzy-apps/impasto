@@ -38,7 +38,7 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
     header->addWidget(m_title, 1);
     m_figuresBtn = textButton(tr("Figures"), tr("People to pose: the mannequin, the ones built in, and your own"), "model-figures");
     IconButton* open = textButton(tr("Open"), tr("A model of your own: glTF, GLB, OBJ or STL"), "model-open");
-    IconButton* place = textButton(tr("Place"), tr("The model as the view shows it, without the floor, as a new layer to draw over"), "model-place");
+    IconButton* place = textButton(tr("Place"), tr("Put the model on the canvas in a frame of its own, still to be turned, posed, sized and moved, until Apply makes a layer of it"), "model-place");
     m_pick = new IconButton(QStringLiteral("eyedropper"), this, 20);
     m_pick->setObjectName(QStringLiteral("model-pick"));
     m_pick->setToolTip(tr("Pick a colour from the model"));
@@ -205,6 +205,7 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
         m_tools->noteColorUsed();
     });
     connect(m_view, &ModelView::edited, this, &ModelPanel::keep);
+    connect(m_view, &ModelView::modeChanged, this, [this] { sync(); });
     connect(m_figuresBtn, &QAbstractButton::clicked, this, [this] { showFigures(!m_figureRow->isVisible()); });
     connect(m_keepBtn, &QAbstractButton::clicked, this, &ModelPanel::keepAsFigure);
     connect(open, &QAbstractButton::clicked, this, [this] {
@@ -218,9 +219,10 @@ ModelPanel::ModelPanel(ToolState* tools, QWidget* parent) : QWidget(parent), m_t
             keep();
     });
     connect(place, &QAbstractButton::clicked, this, [this] {
-        const QImage image = placement();
-        if (!image.isNull())
-            emit placeRequested(image);
+        if (m_view->rigging())
+            emit message(tr("Bind the joints, or cancel, before placing it"));
+        else if (m_view->model())
+            emit placeRequested();
     });
 }
 
@@ -444,13 +446,6 @@ void ModelPanel::setCanvasSize(const QSize& size)
 {
     m_canvas = size;
     m_view->setFrameAspect(size.isEmpty() ? 0.0 : double(size.width()) / size.height());
-}
-
-QImage ModelPanel::placement() const
-{
-    if (m_canvas.isEmpty())
-        return {};
-    return m_view->renderImage(m_canvas, true);
 }
 
 void ModelPanel::sync()

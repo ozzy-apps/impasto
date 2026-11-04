@@ -11,7 +11,7 @@
 
 bool CanvasWidget::startLiquify()
 {
-    if (m_liquify.active || m_tf.active || m_shape.editing || m_crop.active || m_engine->editActive() || m_drag != Drag::None)
+    if (m_liquify.active || m_tf.active || m_model.active || m_shape.editing || m_crop.active || m_engine->editActive() || m_drag != Drag::None)
         return false;
     setSelectMode(false);
     setGradientMode(false);

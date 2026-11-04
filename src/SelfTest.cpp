@@ -5493,13 +5493,51 @@ static bool runModelUi(MainWindow& window, CanvasEngine& engine, const std::func
     auto* place = window.findChild<QWidget*>(QStringLiteral("model-place"));
     penTap(place, QPointF(place->width() / 2.0, place->height() / 2.0));
     settle();
+    // On the canvas it sits in a frame, still live: a drag in the frame turns
+    // it, a corner of the frame sizes it, and Apply makes the layer.
+    auto* canvas = window.centralWidget()->findChild<CanvasWidget*>();
+    const QRectF frameBefore = canvas->modelFrame();
+    const bool staged = canvas->placingModel() && !pop->isVisible() && window.findChild<QWidget*>(QStringLiteral("model-bar")) && !frameBefore.isEmpty();
+    check(QStringLiteral("Sit seats the figure; Place puts it on the canvas in a frame of its own (%1 x %2 px), the panel out of the way")
+              .arg(frameBefore.width(), 0, 'f', 0).arg(frameBefore.height(), 0, 'f', 0),
+          seated && staged);
+    const QImage before = canvas->grabFramebuffer();
+    const QPoint framePx = (canvas->canvasToWidget(frameBefore.center()) * canvas->devicePixelRatioF()).toPoint();
+    const bool shown = before.rect().contains(framePx) && before.pixelColor(framePx).lightness() < 220;   // the figure, not the white canvas
+    auto* barModes = window.findChild<SegmentBar*>(QStringLiteral("model-bar-modes"));
+    if (barModes)
+        penTap(barModes, barModes->segmentRect(0).center());
+    const double yawStaged = view->yaw();
+    const QPointF low = canvas->canvasToWidget(frameBefore.center() + QPointF(0.0, frameBefore.height() * 0.3));
+    drag(canvas, low, low + QPointF(120.0, 0.0));
+    check(QStringLiteral("the frame shows the figure (%1 in the middle of it); in Turn, a drag in it turns the figure (%2° to %3°)")
+              .arg(before.pixelColor(framePx).name()).arg(yawStaged, 0, 'f', 0).arg(view->yaw(), 0, 'f', 0),
+          shown && std::abs(view->yaw() - yawStaged) > 30.0);
+    const QVector<QPointF> frameHandles = canvas->modelHandlePositions();
+    if (frameHandles.size() == 8)
+        drag(canvas, frameHandles[4], frameHandles[4] + QPointF(60.0, 60.0));
+    const QRectF frameAfter = canvas->modelFrame();
+    check(QStringLiteral("its bottom right corner dragged out makes the frame bigger, the figure with it (%1 to %2 px tall)")
+              .arg(frameBefore.height(), 0, 'f', 0).arg(frameAfter.height(), 0, 'f', 0),
+          frameAfter.height() > frameBefore.height() + 20.0 && std::abs(frameAfter.width() / frameAfter.height() - frameBefore.width() / frameBefore.height()) < 0.01
+              && frameAfter.topLeft() == frameBefore.topLeft());
+    capture(QStringLiteral("model-placing"));
+    auto* apply = window.findChild<QWidget*>(QStringLiteral("model-apply"));
+    if (apply)
+        penTap(apply, QPointF(apply->width() / 2.0, apply->height() / 2.0));
+    settle();
     const LayerInfo placed = engine.layerInfo(engine.activeLayerId());
     const QRect inked = engine.layerContentBounds(engine.activeLayerId());
-    check(QStringLiteral("Sit seats the figure; Place puts the view on the canvas as a layer of its own (%1 x %2 px of figure)").arg(inked.width()).arg(inked.height()),
-          seated && engine.layerCount() == layersBefore + 1 && placed.name == QLatin1String("3D reference") && inked.height() > 300
-              && inked.width() < engine.canvasSize().width());
+    const QRect frameRect = frameAfter.toAlignedRect().intersected(QRect(QPoint(), engine.canvasSize()));
+    check(QStringLiteral("Apply puts the frame on the canvas as a layer of its own (%1 x %2 px of figure inside the %3 x %4 frame)")
+              .arg(inked.width()).arg(inked.height()).arg(frameRect.width()).arg(frameRect.height()),
+          !canvas->placingModel() && engine.layerCount() == layersBefore + 1 && placed.name == QLatin1String("3D reference") && inked.height() > frameRect.height() * 0.3
+              && frameRect.adjusted(-1, -1, 1, 1).contains(inked) && inked.width() < frameRect.width());
     capture(QStringLiteral("model-placed"));
     engine.undo();
+    // The panel back, for what follows.
+    penTap(button, QPointF(button->width() / 2.0, button->height() / 2.0));
+    settle();
 
     // A model from a file in place of the figure: no figure poses for it.
     QTemporaryDir dir;

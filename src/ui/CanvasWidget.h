@@ -17,6 +17,7 @@
 #include <QTransform>
 
 class CanvasEngine;
+class ModelView;
 class QPlainTextEdit;
 class ToolState;
 
@@ -176,6 +177,19 @@ public:
     QVector<GradientStop> gradientStops() const { return m_gradient.stops; }
     void setGradientStops(const QVector<GradientStop>& stops) { m_gradient.stops = stops; }
 
+    // ---- a 3D model placed on the canvas: it sits in a frame of its own,
+    // where it can still be turned, posed and lit, and the frame moved by its
+    // edge, scaled by a corner or cropped by a side, until it is applied as a
+    // layer or let go. Nothing touches the artwork before Apply.
+    bool startModelPlace(ModelView* view);
+    void finishModelPlace(bool commit);
+    bool placingModel() const { return m_model.active; }
+    void modelPlaceChanged();   // posed, turned or lit from the bar: draw it again
+    void modelPlaceFit();       // the whole model in the frame again
+    QRectF modelFrame() const { return m_model.frame; }   // canvas px
+    QVector<QPointF> modelHandlePositions() const;   // widget coordinates: the frame's eight
+    QVector<QPointF> modelJointPositions() const;    // widget coordinates: the joints to pose by
+
     // How long since the pen or mouse last did anything here, in milliseconds.
     qint64 idleMs() const { return m_clock.elapsed() - m_lastPointerMs; }
 
@@ -218,6 +232,7 @@ signals:
     void selectToleranceChanged(float tolerance);
     void thresholdShown();   // the threshold readout has taken the place a message would use
     void transformFinished();
+    void modelPlaceFinished(bool placed);
     void toast(const QString& text);
     void cropChanged();
     void cropFinished();
@@ -257,7 +272,7 @@ private:
         Qt::KeyboardModifiers mods;
         bool eraserEnd = false;
     };
-    enum class Drag { None, Stroke, Pan, Zoom, Rotate, Pick, Transform, Shape, Select, Flood, Size, Guide, Crop, Gradient, Liquify, Text };
+    enum class Drag { None, Stroke, Pan, Zoom, Rotate, Pick, Transform, Shape, Select, Flood, Size, Guide, Crop, Gradient, Liquify, Text, Model };
 
     void pointerPress(const PointerInput& in);
     void pointerMove(const PointerInput& in);
@@ -311,6 +326,13 @@ private:
     void withdrawShapeOffer();
     void checkShapeOffer();
     void drawShapeOverlay(QPainter& p);
+
+    int modelHit(const QPointF& logical) const;
+    void modelPress(const PointerInput& in);
+    void modelMove(const PointerInput& in);
+    void modelRelease();
+    void renderModel();   // the frame's picture, as many pixels as it shows
+    void drawModelOverlay(QPainter& p);
 
     QTransform transformMatrix() const;
     QPointF handleCanvasPos(int handle) const;
@@ -516,6 +538,20 @@ private:
     QVector<QPointF> m_pressureCurve;   // empty = straight through
     bool m_padMode = false;
     float curved(float pressure) const;
+
+    struct ModelSession {
+        bool active = false;
+        ModelView* view = nullptr;
+        QRectF frame;          // canvas px: what the frame shows of the camera's view
+        QPointF centre;        // canvas px: where the camera looks
+        double height = 1.0;   // canvas px: the camera's whole view, top to bottom
+        QImage image;          // the frame as last drawn
+        bool dirty = true;
+        int handle = -1;       // 0..7 round the frame, then its edge, then the model inside
+        QPointF startMouse, startCentre;
+        QRectF startFrame;
+        double startHeight = 1.0;
+    } m_model;
 
     struct TransformSession {
         bool active = false;

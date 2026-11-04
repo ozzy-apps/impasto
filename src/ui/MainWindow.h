@@ -105,6 +105,7 @@ private:
     void showAbout();
 
     void startTransform();
+    void startModelPlace();
     void startCrop();
     void addText();
     void startLiquify();

@@ -24,7 +24,6 @@ public:
     bool openModel(const QString& path);
     void showFigure();
     void setCanvasSize(const QSize& size);
-    QImage placement() const;   // the view as a layer the size of the canvas
     // Rigging a model that came without joints: the figure's skeleton fitted
     // into it, to be checked and then bound.
     bool startRig();
@@ -34,7 +33,7 @@ public:
     bool keepAsFigure();
 
 signals:
-    void placeRequested(const QImage& image);
+    void placeRequested();   // onto the canvas, in a frame to work it in before it becomes a layer
     void message(const QString& text);
 
 protected:

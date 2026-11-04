@@ -14,7 +14,9 @@
 #include "ui/ReferencePanel.h"
 #include "ui/StabilisePanel.h"
 #include "ui/Timeline.h"
+#include "model/Model3D.h"
 #include "ui/ModelPanel.h"
+#include "ui/ModelView.h"
 #include "ui/ShortcutSheet.h"
 #include "ui/Theme.h"
 #include "ui/ToolState.h"
@@ -614,10 +616,10 @@ void MainWindow::buildPopovers()
     m_modelPanel->setCanvasSize(m_engine->canvasSize());
     connect(m_engine, &CanvasEngine::documentChanged, m_modelPanel, [this] { m_modelPanel->setCanvasSize(m_engine->canvasSize()); });
     connect(m_modelPanel, &ModelPanel::message, this, [this](const QString& text) { m_toast->showMessage(text); });
-    connect(m_modelPanel, &ModelPanel::placeRequested, this, [this](const QImage& image) {
-        if (editing())
-            return;
-        if (m_engine->addImageLayer(image, tr("3D reference"), QPoint(0, 0), tr("Place 3D Reference")))
+    connect(m_modelPanel, &ModelPanel::placeRequested, this, &MainWindow::startModelPlace);
+    connect(m_canvas, &CanvasWidget::modelPlaceFinished, this, [this](bool placed) {
+        endEditBar();
+        if (placed)
             m_toast->showMessage(tr("Placed as a layer of its own: lower its opacity to draw over it"));
     });
     m_steadyPop = new Popover(m_host);
@@ -826,6 +828,8 @@ void MainWindow::buildShortcuts()
     add(QKeySequence(Qt::Key_Return), [this] {
         if (m_canvas->transforming())
             m_canvas->finishTransform(true);
+        else if (m_canvas->placingModel())
+            m_canvas->finishModelPlace(true);
         else if (m_canvas->cropping())
             m_canvas->finishCrop(true);
         else if (m_canvas->liquifying())
@@ -848,6 +852,8 @@ void MainWindow::buildShortcuts()
             m_canvas->endFloodDrag(false);
         else if (m_canvas->transforming())
             m_canvas->finishTransform(false);
+        else if (m_canvas->placingModel())
+            m_canvas->finishModelPlace(false);
         else if (m_canvas->cropping())
             m_canvas->finishCrop(false);
         else if (m_canvas->liquifying())
@@ -875,6 +881,8 @@ void MainWindow::showForScreenshot(const QString& what)
 {
     if (m_canvas->transforming())
         m_canvas->finishTransform(false);
+    if (m_canvas->placingModel())
+        m_canvas->finishModelPlace(false);
     if (m_canvas->cropping())
         m_canvas->finishCrop(false);
     if (m_canvas->liquifying())
@@ -1597,6 +1605,8 @@ void MainWindow::closeEvent(QCloseEvent* e)
 {
     if (m_canvas->transforming())
         m_canvas->finishTransform(false);
+    if (m_canvas->placingModel())
+        m_canvas->finishModelPlace(false);
     if (m_canvas->cropping())
         m_canvas->finishCrop(false);
     if (m_canvas->liquifying())
@@ -1622,7 +1632,7 @@ void MainWindow::closeEvent(QCloseEvent* e)
 
 bool MainWindow::editing() const
 {
-    return m_adjusting || m_canvas->transforming() || m_canvas->shapeEditing() || m_canvas->cropping() || m_canvas->liquifying();
+    return m_adjusting || m_canvas->transforming() || m_canvas->placingModel() || m_canvas->shapeEditing() || m_canvas->cropping() || m_canvas->liquifying();
 }
 
 void MainWindow::setEditingUi(bool on)
@@ -1721,6 +1731,116 @@ void MainWindow::startTransform()
     setEditingUi(true);
     layoutOverlays();
     m_canvas->setFocus();
+}
+
+// The 3D model onto the canvas, in a frame to work it in. The bar below has
+// what the panel has for posing it; the panel itself waits, as every panel
+// does while an edit is on.
+void MainWindow::startModelPlace()
+{
+    if (editing())
+        return;
+    ModelView* view = m_modelPanel->view();
+    if (!view->model())
+        return;
+    closePopovers();
+    showGuideBar(false);
+    m_canvas->setSelectMode(false);
+    m_canvas->setGradientMode(false);
+    m_canvas->setTextMode(false);
+    m_canvas->armFill(false);
+    if (!m_canvas->startModelPlace(view))
+        return;
+
+    m_editBar = new Panel(m_host, 16);
+    m_editBar->setObjectName(QStringLiteral("model-bar"));
+    auto* outer = new QVBoxLayout(m_editBar);
+    outer->setContentsMargins(10, 6, 10, 6);
+    outer->setSpacing(2);
+    auto* row = new QHBoxLayout;
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(2);
+    auto textButton = [this, row](const QString& label, const QString& tip, const char* name) {
+        auto* b = new IconButton(QString(), m_editBar);
+        b->setText(label);
+        b->setToolTip(tip);
+        b->setObjectName(QLatin1String(name));
+        row->addWidget(b);
+        return b;
+    };
+    auto* modes = new SegmentBar({tr("Turn"), tr("Pose"), tr("Light")}, m_editBar);
+    modes->setObjectName(QStringLiteral("model-bar-modes"));
+    modes->setToolTip(tr("What a drag in the frame does: turn the model round, move its joints, or move the light"));
+    modes->setCurrent(int(view->mode()));
+    row->addWidget(modes);
+    connect(modes, &SegmentBar::currentChanged, m_editBar, [this, view](int i) {
+        view->setMode(ModelView::Mode(i));
+        m_canvas->update();
+    });
+    connect(view, &ModelView::modeChanged, modes, [modes](ModelView::Mode mode) { modes->setCurrent(int(mode)); });
+    // Posed, turned or lit by any road, the frame draws it again.
+    connect(view, &ModelView::edited, m_editBar, [this] { m_canvas->modelPlaceChanged(); });
+    row->addSpacing(8);
+    IconButton* twist = textButton(tr("Twist"), tr("A drag on a joint turns the bone about itself"), "model-bar-twist");
+    twist->setActive(view->twist());
+    twist->setEnabled(!view->model()->handles.empty());
+    connect(twist, &QAbstractButton::clicked, m_editBar, [view, twist] {
+        view->setTwist(!view->twist());
+        if (view->twist())
+            view->setMode(ModelView::Mode::Pose);
+        twist->setActive(view->twist());
+    });
+    connect(textButton(tr("Reset"), tr("Stand straight again"), "model-bar-reset"), &QAbstractButton::clicked, m_editBar, [view] {
+        view->model()->resetPose();
+        view->modelEdited();
+    });
+    connect(textButton(tr("Fit"), tr("The whole model in the frame"), "model-bar-fit"), &QAbstractButton::clicked, m_editBar,
+            [this] { m_canvas->modelPlaceFit(); });
+    IconButton* hard = textButton(tr("Hard light"), tr("Two tones: where the light falls and where it does not"), "model-bar-hard");
+    hard->setActive(view->hardLight());
+    connect(hard, &QAbstractButton::clicked, m_editBar, [this, view, hard] {
+        view->setHardLight(!view->hardLight());
+        hard->setActive(view->hardLight());
+        m_canvas->modelPlaceChanged();
+    });
+    row->addSpacing(14);
+    auto* cancel = new IconButton(QStringLiteral("close"), m_editBar, 20);
+    cancel->setToolTip(tr("Cancel (Esc)"));
+    row->addWidget(cancel);
+    connect(cancel, &QAbstractButton::clicked, this, [this] { m_canvas->finishModelPlace(false); });
+    auto* apply = new IconButton(QStringLiteral("check"), m_editBar, 20);
+    apply->setObjectName(QStringLiteral("model-apply"));
+    apply->setToolTip(tr("Apply (Enter): the frame becomes a layer to draw over"));
+    apply->setActive(true);
+    row->addWidget(apply);
+    connect(apply, &QAbstractButton::clicked, this, [this] { m_canvas->finishModelPlace(true); });
+    outer->addLayout(row);
+    if (view->model()->humanoid) {
+        // The figure's poses, under the rest.
+        auto* poses = new QHBoxLayout;
+        poses->setContentsMargins(0, 0, 0, 0);
+        poses->setSpacing(0);
+        for (const QString& pose : Model3D::figurePoses()) {
+            auto* b = new IconButton(QString(), m_editBar);
+            b->setText(pose);
+            b->setToolTip(tr("Put the figure in this pose"));
+            b->setObjectName(QStringLiteral("model-bar-pose"));
+            b->setProperty("pose", pose);
+            poses->addWidget(b);
+            connect(b, &QAbstractButton::clicked, m_editBar, [view, pose] {
+                view->model()->applyFigurePose(pose);
+                view->modelEdited();
+            });
+        }
+        poses->addStretch();
+        outer->addLayout(poses);
+    }
+
+    m_editBar->show();
+    setEditingUi(true);
+    layoutOverlays();
+    m_canvas->setFocus();
+    m_toast->showMessage(tr("Drag in the frame to work the model; drag the frame's edge to move it, a corner to size it, a side to crop it"));
 }
 
 void MainWindow::showShapeBar()

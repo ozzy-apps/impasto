@@ -19,7 +19,7 @@ constexpr int kMoveHandle = 8;
 
 bool CanvasWidget::startCrop()
 {
-    if (m_crop.active || m_tf.active || m_shape.editing || m_engine->editActive() || m_drag != Drag::None || !m_engine->hasDocument())
+    if (m_crop.active || m_tf.active || m_model.active || m_shape.editing || m_engine->editActive() || m_drag != Drag::None || !m_engine->hasDocument())
         return false;
     setSelectMode(false);
     armFill(false);
@@ -194,7 +194,7 @@ void CanvasWidget::setGradientMode(bool on)
     if (m_gradient.mode == on)
         return;
     if (on) {
-        if (m_tf.active || m_shape.editing || m_crop.active || m_engine->editActive() || m_drag != Drag::None)
+        if (m_tf.active || m_model.active || m_shape.editing || m_crop.active || m_engine->editActive() || m_drag != Drag::None)
             return;
         setSelectMode(false);
         setTextMode(false);

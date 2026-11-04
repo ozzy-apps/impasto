@@ -269,7 +269,9 @@ void CanvasWidget::paintGL()
     if (m_fitPending)
         fitToView();
 
-    // The engine recomposites in its own context, then gives ours back.
+    // The model being placed is drawn in its own view's context first, then
+    // the engine recomposites in its own, and each gives ours back.
+    renderModel();
     m_engine->prepareFrame(m_zoom < 1.0);
     makeCurrent();
 
@@ -377,6 +379,7 @@ void CanvasWidget::drawOverlay(QPainter& p)
 
     drawGuides(p);
     drawCropOverlay(p);
+    drawModelOverlay(p);
     drawLiquifyCursor(p);
     drawTextOverlay(p);
     drawSelectionOverlay(p);
@@ -405,7 +408,8 @@ void CanvasWidget::drawOverlay(QPainter& p)
         p.drawArc(ring, 180 * 16, 180 * 16);
         p.setPen(QPen(Qt::white, 1.2));
         p.drawEllipse(m_cursor, 3, 3);
-    } else if (m_cursorInside && !m_tf.active && !m_shape.editing && !m_crop.active && !m_liquify.active && !m_text.mode && !m_select.mode && !m_gradient.mode && !m_space
+    } else if (m_cursorInside && !m_tf.active && !m_model.active && !m_shape.editing && !m_crop.active && !m_liquify.active && !m_text.mode && !m_select.mode
+               && !m_gradient.mode && !m_space
                && !m_engine->editActive()
                && (m_drag == Drag::None || m_drag == Drag::Stroke || m_drag == Drag::Flood)) {
         if (m_fillArmed) {
@@ -630,6 +634,11 @@ void CanvasWidget::pointerPress(const PointerInput& in)
         m_tf.startWarp = m_tf.warpPts;
         m_drag = Drag::Transform;
         update();
+        return;
+    }
+    if (m_model.active) {
+        if (in.button == Qt::LeftButton)
+            modelPress(in);
         return;
     }
     if (m_shape.editing) {
@@ -902,6 +911,9 @@ void CanvasWidget::pointerMove(const PointerInput& in)
         applyTransform();
         break;
     }
+    case Drag::Model:
+        modelMove(in);
+        break;
     case Drag::None:
         break;
     }
@@ -977,6 +989,9 @@ void CanvasWidget::pointerRelease(const PointerInput& in)
     case Drag::Transform:
         m_tf.handle = -1;
         break;
+    case Drag::Model:
+        modelRelease();
+        break;
     default:
         break;
     }
@@ -1021,6 +1036,19 @@ void CanvasWidget::wheelEvent(QWheelEvent* e)
     const int steps = d.y() != 0 ? d.y() : d.x();
     if (steps == 0 || !m_engine->hasDocument() || m_padMode)
         return;
+    if (m_model.active && !(e->modifiers() & (Qt::ShiftModifier | Qt::AltModifier)) && m_drag == Drag::None) {
+        // Over the frame, the wheel grows or shrinks the picture about the pen, frame and model together.
+        const QPointF c = widgetToCanvas(e->position());
+        const double k = std::pow(1.0015, steps);
+        if (m_model.frame.contains(c) && std::min(m_model.frame.width(), m_model.frame.height()) * k >= 16.0) {
+            m_model.frame = QRectF(c + (m_model.frame.topLeft() - c) * k, m_model.frame.size() * k);
+            m_model.centre = c + (m_model.centre - c) * k;
+            m_model.height *= k;
+            modelPlaceChanged();
+            e->accept();
+            return;
+        }
+    }
     if (e->modifiers() & Qt::ShiftModifier) {
         rotateAround(steps / 120.0 * 5.0, toDevice(QPointF(width() / 2.0, height() / 2.0)));
     } else if (e->modifiers() & Qt::AltModifier) {
@@ -1043,7 +1071,7 @@ void CanvasWidget::updateCursorShape()
         setCursor(Qt::OpenHandCursor);
     else if (m_liquify.active)
         setCursor(Qt::BlankCursor);   // the brush outline is the cursor
-    else if (m_tf.active || m_shape.editing || m_crop.active || m_engine->editActive())
+    else if (m_tf.active || m_model.active || m_shape.editing || m_crop.active || m_engine->editActive())
         setCursor(Qt::ArrowCursor);
     else if (m_text.mode)
         setCursor(m_text.placed ? Qt::SizeAllCursor : Qt::IBeamCursor);
@@ -1084,6 +1112,10 @@ void CanvasWidget::keyPressEvent(QKeyEvent* e)
             finishTransform(true);
             return;
         }
+        if (m_model.active) {
+            finishModelPlace(true);
+            return;
+        }
         if (m_shape.editing) {
             finishShapeEdit(true);
             return;
@@ -1092,6 +1124,10 @@ void CanvasWidget::keyPressEvent(QKeyEvent* e)
     case Qt::Key_Escape:
         if (m_tf.active) {
             finishTransform(false);
+            return;
+        }
+        if (m_model.active) {
+            finishModelPlace(false);
             return;
         }
         if (m_shape.editing) {
@@ -1264,7 +1300,7 @@ QVector<QPointF> CanvasWidget::transformWarpPositions() const
 
 bool CanvasWidget::startTransform()
 {
-    if (m_tf.active || m_drag != Drag::None)
+    if (m_tf.active || m_model.active || m_drag != Drag::None)
         return false;
     const QRect bounds = m_engine->editableBounds(m_engine->activeLayerId());
     if (bounds.isEmpty()) {
