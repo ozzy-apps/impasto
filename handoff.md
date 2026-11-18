@@ -1,3 +1,7 @@
+# Impasto 0.15.0 · New Canvas, Invoke masks and guides, Palette from a Picture · 2026-11-18
+
+Linux-only release (DEB, AppImage, Flatpak): https://github.com/ozzy-apps/impasto/releases/tag/v0.15.0, tag `v0.15.0` on `8e19b99`. All seven uploaded files match the local SHA-256 digests; the public latest-release endpoint shows v0.15.0. Before upload the AppImage and the .deb's binary ran the `canvas`, `palette` and `invoke` `--ui-shot` groups without failures; the Flatpak bundle was not run (installing it leaves a `~/.var/app` folder). The user installed the .deb. Windows stays on 0.12.0. Not run yet: an Invoke generation with regions, a control layer or the inpainting adapter. The README screenshot `docs/product/invoke-inpaint.png` still shows the 0.14 dock.
+
 # Impasto 0.14.0 · InvokeAI integration · 2026-11-18
 
 Linux-only release (DEB, AppImage, Flatpak): https://github.com/ozzy-apps/impasto/releases/tag/v0.14.0, tag `v0.14.0` on `66cd44d`. All seven uploaded files match the local SHA-256 digests; the public latest-release endpoint shows v0.14.0. Before upload, each package ran `IMPASTO_ONLY=invoke IMPASTO_INVOKE_LIVE=1 --ui-shot` and connected to the local Invoke (the Flatpak installed for the user, then uninstalled; its `~/.var/app` folder did not exist before and was removed). Windows stays on 0.12.0. The user installed the .deb (it replaced 0.12.1). The README screenshot `docs/product/invoke-inpaint.png` still shows the old dock.
