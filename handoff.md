@@ -1,5 +1,7 @@
 # Impasto 0.14.0 · InvokeAI integration · 2026-11-18
 
+Linux-only release (DEB, AppImage, Flatpak): https://github.com/ozzy-apps/impasto/releases/tag/v0.14.0, tag `v0.14.0` on `66cd44d`. All seven uploaded files match the local SHA-256 digests; the public latest-release endpoint shows v0.14.0. Before upload, each package ran `IMPASTO_ONLY=invoke IMPASTO_INVOKE_LIVE=1 --ui-shot` and connected to the local Invoke (the Flatpak installed for the user, then uninstalled; its `~/.var/app` folder did not exist before and was removed). Windows stays on 0.12.0. The user installed the .deb (it replaced 0.12.1). The README screenshot `docs/product/invoke-inpaint.png` still shows the old dock.
+
 Impasto is a C++20, Qt 6 Widgets and OpenGL 4.3 painting app for Linux and Windows. CMake is the source of the semantic version. This iteration adds an Invoke dock to the painting workspace and links Qt Network. The integration uses the running InvokeAI instance and its registered models. Accepted pixels are stored as raster layers in existing Impasto documents.
 
 ## Built
