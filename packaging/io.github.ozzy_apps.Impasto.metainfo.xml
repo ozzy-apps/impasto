@@ -47,6 +47,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.15.0" date="2026-11-18">
+      <description>
+        <p>A new New Canvas window: sizes to start from, width, height and resolution that change as they are dragged, a shape lock, portrait and landscape, and a preview of the sheet.</p>
+      </description>
+    </release>
     <release version="0.14.0" date="2026-11-18">
       <description>
         <p>Connect to InvokeAI for Anima image-to-image and masked inpainting. Preview generations on the canvas and accept them as editable layers.</p>
