@@ -47,6 +47,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.16.0" date="2026-11-18">
+      <description>
+        <p>Every brush gone over: clean edges on thin and squashed nibs, paper tooth that shades smoothly from a light touch to full pressure, flat and long brushes that no longer saw at their edges, colour that varies smoothly along a stroke, and wet brushes that cover and mix. Three new brushes: Flat Wash, Halftone Shade and Hair Strands.</p>
+      </description>
+    </release>
     <release version="0.15.0" date="2026-11-18">
       <description>
         <p>A new New Canvas window: sizes to start from, width, height and resolution that change as they are dragged, a shape lock, portrait and landscape, and a preview of the sheet. Invoke masks and guides: inpaint masks, regions with prompts of their own and ControlNet-LLLite control layers. Palette from a Picture: choose how many colours, leave some out, name it, save and export it.</p>

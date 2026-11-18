@@ -24,6 +24,7 @@ modules:
           - build-release
           - build-flatpak
           - dist
+          - out
           - AppDir
           - .flatpak-builder
           - .git
