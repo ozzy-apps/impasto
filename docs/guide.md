@@ -46,6 +46,17 @@ the gallery. Documents are `.imp` files; brushes travel as `.impbrush` files.
 `.sbkbrush` brushes open as they always did, and on its first start Impasto
 takes over Sketchbook's settings, brushes and palettes.)
 
+## InvokeAI
+
+1. Start InvokeAI with your models registered in its Model Manager. Press the Invoke mark (the I) in the Impasto toolbar: the Invoke panel opens on the left, beside the side bar, and stays open while you paint. Enter the server URL (the local default is http://127.0.0.1:9090) and choose **Connect**. Enter a bearer token if your server needs one; it is not kept.
+2. Choose an **Anima model** and write a prompt, and a negative prompt if you want one. **Ctrl+Enter** in either prompt generates. On the first connection CakePop, Anima Qwen3 0.6B Text Encoder and Anima QwenImage VAE are chosen if they are installed; **Components** at the bottom of the panel changes the encoder and VAE.
+3. Set the numbers with the sliders, which are sized for the pen: **Denoising strength** (how much the picture may change), **Steps**, **CFG scale** (how closely the prompt is followed; 1 turns the negative prompt off), **Render size** (the longer side Invoke paints) and, for inpainting, **Mask feather**. **Sampler** and **Seed** are below them; leave the seed empty for a new one each time, or press **Reuse** for the seed of the last result. The prompt and settings are remembered.
+4. Generate from the **Full canvas**, or make a selection with Impasto's selection tool and press **Selection** to use its bounds as the frame. You can then deselect or continue painting.
+5. For **Inpaint**, choose **Paint mask**. Paint on the Invoke Mask layer with any brush. Stroke opacity determines mask coverage, so a soft brush gives a soft edge and the eraser removes coverage. Generate hides this layer and sends its coverage as a mask. **Mask feather** softens the edge where the result meets your painting. Press **Paint mask** again to edit it.
+6. Choose **Generate**. You can keep painting while Invoke works. **Compare** hides the result to show the canvas under it, **Result** brings it back; **Add as layer** keeps it as a new top-level layer, **Discard** throws it away. Inpainting adds a patch limited to the mask. Accepted results can be undone normally.
+
+Invoke receives a copy of the visible artwork inside the frame and, in inpainting mode, the mask. It stores the generated image in its image library. Impasto saves accepted layers with the artwork. This first version handles still canvases and was tested with InvokeAI 7.0.0-alpha.4.
+
 ## Build and run
 
 For Windows, see [the Windows build instructions](../packaging/windows/BUILD.md)

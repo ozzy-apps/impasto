@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
 endif()
-project(Impasto VERSION 0.13.0 LANGUAGES C CXX)
+project(Impasto VERSION 0.14.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,7 +15,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets Svg Network)
 # Zip for OpenRaster and deflate for Photoshop channels. Windows builds may
 # fetch a pinned zlib when no development package is installed.
 find_package(ZLIB QUIET)
@@ -66,7 +66,7 @@ target_compile_definitions(impasto PRIVATE
     IMPASTO_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(impasto PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg ZLIB::ZLIB)
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Svg Qt6::Network ZLIB::ZLIB)
 
 # Renders the app icon at the sizes desktops want (packaging/icons); built only when asked for.
 add_executable(impasto-svg2png EXCLUDE_FROM_ALL tools/svg2png.cpp)

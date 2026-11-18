@@ -933,14 +933,14 @@ void CanvasEngine::setActiveLayer(int id)
     emit layersChanged();
 }
 
-int CanvasEngine::addLayer()
+int CanvasEngine::addLayer(const QString& name, bool onTop)
 {
     if (!hasDocument() || busy())
         return 0;
     Scope s(this);
     const Structure before = captureStructure();
-    LayerPtr layer = createLayer(nextLayerName());
-    const int index = insertionPoint(&layer->parent);
+    LayerPtr layer = createLayer(name.isEmpty() ? nextLayerName() : name);
+    const int index = onTop ? int(m_layers.size()) : insertionPoint(&layer->parent);
     m_layers.insert(m_layers.begin() + index, layer);
     m_activeId = layer->id;
     m_maskEditing = false;
@@ -970,7 +970,8 @@ int CanvasEngine::addGroup()
     return group->id;
 }
 
-int CanvasEngine::addImageLayer(const QImage& image, const QString& name, const QPoint& topLeft, const QString& undoName)
+int CanvasEngine::addImageLayer(const QImage& image, const QString& name, const QPoint& topLeft,
+                                const QString& undoName, bool onTop)
 {
     if (!hasDocument() || image.isNull() || busy())
         return 0;
@@ -989,7 +990,7 @@ int CanvasEngine::addImageLayer(const QImage& image, const QString& name, const 
         at.setY(std::clamp(topLeft.y(), 0, m_size.height() - img.height()));
     }
     layer->tex.upload(img, at);
-    const int index = insertionPoint(&layer->parent);
+    const int index = onTop ? int(m_layers.size()) : insertionPoint(&layer->parent);
     m_layers.insert(m_layers.begin() + index, layer);
     m_activeId = layer->id;
     m_maskEditing = false;
@@ -1733,6 +1734,7 @@ void CanvasEngine::flipCanvas(bool horizontal)
         std::swap(m_guides.isoLeft, m_guides.isoRight);
         emit guidesChanged();
         damageAll();
+        emit canvasFlipped();
         emit layersChanged();
     };
     Scope s(this);
@@ -1892,6 +1894,15 @@ std::array<QVector<float>, 4> CanvasEngine::layerHistogram(int id)
             out[size_t(c)][i] = float(counts[c][i] / most);
     }
     return out;
+}
+
+QImage CanvasEngine::rasterLayerImage(int id, const QRect& region)
+{
+    const LayerPtr layer = find(id);
+    if (!layer || layer->isGroup || region.isEmpty() || !canvasRect().contains(region))
+        return {};
+    Scope s(this);
+    return layer->tex.readback(region);
 }
 
 QByteArray CanvasEngine::layerPixels(int id)
@@ -4212,16 +4223,21 @@ QImage CanvasEngine::downscale(const gfx::Texture& src, const QRect& srcRect, co
     return small.readback(small.rect());
 }
 
-QImage CanvasEngine::renderImage()
+QImage CanvasEngine::renderImage(const QRect& region)
 {
     if (!hasDocument())
         return {};
+    const QRect bounds = region.isNull() ? canvasRect() : region.intersected(canvasRect());
+    if (bounds.isEmpty())
+        return {};
     // An animation's picture is the frame being worked on, as it plays: onion skins are only a guide.
-    if (m_anim.enabled && m_playFrame < 0)
-        return renderFrame(currentFrame());
+    if (m_anim.enabled && m_playFrame < 0) {
+        const QImage frame = renderFrame(currentFrame());
+        return region.isNull() ? frame : frame.copy(bounds);
+    }
     Scope s(this);
     prepareFrame(false);
-    return m_result.readback(canvasRect());
+    return m_result.readback(bounds);
 }
 
 QByteArray CanvasEngine::compositePixels()

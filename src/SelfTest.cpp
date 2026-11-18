@@ -25,6 +25,7 @@
 #include "ui/ColorPickers.h"
 #include "ui/PaletteGrid.h"
 #include "ui/Gallery.h"
+#include "ui/InvokePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/NewCanvasDialog.h"
 #include "ui/ReferencePanel.h"
@@ -5782,6 +5783,175 @@ static bool runAnimationUi(MainWindow& window, CanvasEngine& engine, const std::
     return ok;
 }
 
+// The Invoke panel: opened by its button in the top bar, standing on the left
+// beside the side bar, its numbers set with the pen, and Ctrl+Enter in the
+// prompt starting a generation rather than the window's own Ctrl+Enter.
+// IMPASTO_INVOKE_LIVE=1 also connects to the Invoke at the default address and
+// waits for its models (it only reads; nothing is generated).
+static bool runInvokeUi(MainWindow& window, CanvasEngine& engine, const std::function<void(QWidget*, const QPointF&)>& penTap,
+                        const std::function<void(QEvent::Type, const QPointF&, qreal, Qt::MouseButton, Qt::MouseButtons)>& penWindow,
+                        const std::function<void(const QString&)>& capture, const std::function<void()>& settle)
+{
+    QStringList log;
+    bool ok = true;
+    auto check = [&](const QString& what, bool passed) {
+        ok = ok && passed;
+        log << QStringLiteral("%1 %2").arg(passed ? "ok    " : "FAILED", what);
+    };
+    auto drag = [&](QWidget* w, const QPointF& from, const QPointF& to) {
+        const QPointF a = w->mapTo(&window, from.toPoint()), b = w->mapTo(&window, to.toPoint());
+        penWindow(QEvent::TabletMove, a, 0.0, Qt::NoButton, Qt::NoButton);
+        penWindow(QEvent::TabletPress, a, 0.5, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 12; ++i)
+            penWindow(QEvent::TabletMove, a + (b - a) * (i / 12.0), 0.6, Qt::NoButton, Qt::LeftButton);
+        penWindow(QEvent::TabletRelease, b, 0.0, Qt::LeftButton, Qt::NoButton);
+        settle();
+    };
+    engine.newDocument(QSize(1600, 1200), Qt::white);
+    window.showForScreenshot(QStringLiteral("main"));
+    settle();
+
+    auto* button = window.findChild<IconButton*>(QStringLiteral("invoke-button"));
+    auto* panel = window.findChild<InvokePanel*>(QStringLiteral("invoke-panel"));
+    check(QStringLiteral("the Invoke button and panel exist"), button && panel);
+    if (!button || !panel) {
+        qInfo().noquote() << log.join(QLatin1Char('\n'));
+        return false;
+    }
+    check(QStringLiteral("the Invoke button is an icon, not a word"), button->text().isEmpty());
+    check(QStringLiteral("the panel starts closed"), !panel->isVisible());
+    penTap(button, QPointF(button->width() / 2.0, button->height() / 2.0));
+    check(QStringLiteral("the pen on the button opens the panel"), panel->isVisible() && button->isActive());
+    const QRect g = panel->geometry();
+    check(QStringLiteral("the panel stands on the left (x %1, width %2 of %3)").arg(g.x()).arg(g.width()).arg(panel->parentWidget()->width()),
+          g.x() < 80 && g.right() < panel->parentWidget()->width() / 2);
+    check(QStringLiteral("the panel runs down the window (height %1)").arg(g.height()), g.height() > panel->parentWidget()->height() * 0.8);
+
+    auto* steps = panel->findChild<Slider*>(QStringLiteral("invoke-steps"));
+    auto* stepsValue = panel->findChild<QLabel*>(QStringLiteral("invoke-steps-value"));
+    auto* cfg = panel->findChild<Slider*>(QStringLiteral("invoke-guidance"));
+    auto* cfgValue = panel->findChild<QLabel*>(QStringLiteral("invoke-guidance-value"));
+    auto* strength = panel->findChild<Slider*>(QStringLiteral("invoke-strength"));
+    auto* strengthValue = panel->findChild<QLabel*>(QStringLiteral("invoke-strength-value"));
+    auto* size = panel->findChild<Slider*>(QStringLiteral("invoke-size"));
+    auto* sizeValue = panel->findChild<QLabel*>(QStringLiteral("invoke-size-value"));
+    auto* scroll = panel->findChild<QScrollArea*>(QStringLiteral("invoke-scroll"));
+    check(QStringLiteral("strength, steps, CFG and size are sliders"), steps && cfg && strength && size && stepsValue && cfgValue && strengthValue && sizeValue && scroll);
+    if (steps && cfg && strength && size && scroll) {
+        auto slide = [&](Slider* s, double from, double to) {
+            scroll->ensureWidgetVisible(s);
+            settle();
+            const qreal pad = 10.0, span = s->width() - 2 * pad, y = s->height() / 2.0;
+            drag(s, QPointF(pad + span * from, y), QPointF(pad + span * to, y));
+        };
+        slide(steps, 0.27, 0.5);
+        check(QStringLiteral("steps follow the pen to the middle (%1)").arg(stepsValue->text()), stepsValue->text() == QLatin1String("52"));
+        slide(cfg, 0.5, 1.2);
+        check(QStringLiteral("CFG at its top end (%1)").arg(cfgValue->text()), cfgValue->text() == QLatin1String("15.0"));
+        slide(cfg, 1.0, -0.2);
+        check(QStringLiteral("CFG at its bottom end (%1)").arg(cfgValue->text()), cfgValue->text() == QLatin1String("1.0"));
+        slide(cfg, 0.0, 0.33);
+        check(QStringLiteral("CFG lands on half steps (%1)").arg(cfgValue->text()),
+              cfgValue->text().endsWith(QLatin1String(".0")) || cfgValue->text().endsWith(QLatin1String(".5")));
+        slide(strength, 0.5, -0.3);
+        check(QStringLiteral("strength at its bottom end (%1)").arg(strengthValue->text()), strengthValue->text() == QLatin1String("5%"));
+        slide(strength, 0.0, 1.3);
+        check(QStringLiteral("strength at its top end (%1)").arg(strengthValue->text()), strengthValue->text() == QLatin1String("100%"));
+        slide(size, 0.5, 1.2);
+        check(QStringLiteral("render size at its top end (%1)").arg(sizeValue->text()), sizeValue->text() == QLatin1String("2048 px"));
+        auto* info = panel->findChild<QLabel*>(QStringLiteral("invoke-frame-info"));
+        check(QStringLiteral("the frame line follows the size (%1)").arg(info ? info->text() : QString()),
+              info && info->text().contains(QStringLiteral("2048 × 1536")));
+        slide(size, 1.0, 0.28);
+        scroll->verticalScrollBar()->setValue(0);
+        settle();
+    }
+
+    // Inpaint brings its own controls.
+    auto* mode = panel->findChild<SegmentBar*>(QStringLiteral("invoke-mode"));
+    auto* feather = panel->findChild<Slider*>(QStringLiteral("invoke-feather"));
+    auto* paintMask = panel->findChild<IconButton*>(QStringLiteral("invoke-paint-mask"));
+    if (mode && feather && paintMask) {
+        mode->setCurrent(0);
+        emit mode->currentChanged(0);
+        settle();
+        check(QStringLiteral("image to image hides the mask controls"), !feather->isVisible() && !paintMask->isVisible());
+        penTap(mode, mode->segmentRect(1).center());
+        check(QStringLiteral("the pen on Inpaint shows Paint mask and Mask feather"), mode->current() == 1 && feather->isVisible() && paintMask->isVisible());
+    } else {
+        check(QStringLiteral("mode, feather and paint mask exist"), false);
+    }
+    capture(QStringLiteral("invoke"));
+    if (scroll) {
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+        settle();
+        capture(QStringLiteral("invoke-bottom"));
+        scroll->verticalScrollBar()->setValue(0);
+        settle();
+    }
+
+    // Ctrl+Enter, the way Qt delivers it: first a ShortcutOverride to the
+    // focused widget (accepting it keeps the window's own Ctrl+Enter away),
+    // then the key itself.
+    auto* prompt = panel->findChild<QPlainTextEdit*>(QStringLiteral("invoke-prompt"));
+    auto* status = panel->findChild<QLabel*>(QStringLiteral("invoke-status"));
+    if (prompt && status) {
+        prompt->setPlainText(QStringLiteral("a red fox in snow"));
+        prompt->setFocus();
+        settle();
+        auto key = [&](QEvent::Type t, int k, Qt::KeyboardModifiers m, const QString& text = {}) {
+            QKeyEvent ev(t, k, m, text);
+            ev.setAccepted(false);
+            QCoreApplication::sendEvent(prompt, &ev);
+            return ev.isAccepted();
+        };
+        check(QStringLiteral("the prompt claims Ctrl+Enter before the window's shortcut"),
+              key(QEvent::ShortcutOverride, Qt::Key_Return, Qt::ControlModifier));
+        check(QStringLiteral("the prompt claims Ctrl+keypad Enter too"),
+              key(QEvent::ShortcutOverride, Qt::Key_Enter, Qt::ControlModifier | Qt::KeypadModifier));
+        check(QStringLiteral("typing a letter is kept from the tool shortcuts"), key(QEvent::ShortcutOverride, Qt::Key_B, Qt::NoModifier, QStringLiteral("b")));
+        key(QEvent::KeyPress, Qt::Key_Return, Qt::ControlModifier, QStringLiteral("\r"));
+        settle();
+        check(QStringLiteral("Ctrl+Enter asks to generate (%1)").arg(status->text()),
+              status->text() == QLatin1String("Connect to an Invoke server first."));
+        check(QStringLiteral("Ctrl+Enter adds no new line"), prompt->toPlainText() == QLatin1String("a red fox in snow"));
+        prompt->moveCursor(QTextCursor::End);
+        key(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        check(QStringLiteral("Enter alone still starts a new line"), prompt->toPlainText() == QLatin1String("a red fox in snow\n"));
+        prompt->setPlainText(QStringLiteral("a red fox in snow"));
+    } else {
+        check(QStringLiteral("prompt and status exist"), false);
+    }
+
+    if (qEnvironmentVariableIsSet("IMPASTO_INVOKE_LIVE")) {
+        auto* connectBtn = panel->findChild<IconButton*>(QStringLiteral("invoke-connect"));
+        auto* model = panel->findChild<QComboBox*>(QStringLiteral("invoke-model"));
+        auto* generate = panel->findChild<QPushButton*>(QStringLiteral("invoke-generate"));
+        penTap(connectBtn, QPointF(connectBtn->width() / 2.0, connectBtn->height() / 2.0));
+        QElapsedTimer t;
+        t.start();
+        while (model->count() == 0 && t.elapsed() < 15000)
+            QApplication::processEvents(QEventLoop::AllEvents, 20);
+        settle();
+        check(QStringLiteral("connected to the live Invoke: %1 Anima models, %2 chosen").arg(model->count()).arg(model->currentText()),
+              model->count() > 0);
+        check(QStringLiteral("Generate is ready with a prompt (%1)").arg(status->text()), generate->isEnabled());
+        capture(QStringLiteral("invoke-connected"));
+    }
+
+    auto* close = panel->findChild<IconButton*>(QStringLiteral("invoke-close"));
+    penTap(close, QPointF(close->width() / 2.0, close->height() / 2.0));
+    check(QStringLiteral("the close button puts the panel away"), !panel->isVisible() && !button->isActive());
+    penTap(button, QPointF(button->width() / 2.0, button->height() / 2.0));
+    check(QStringLiteral("the button brings it back"), panel->isVisible());
+    window.showForScreenshot(QStringLiteral("main"));
+    settle();
+    check(QStringLiteral("other screenshots leave it closed"), !panel->isVisible() && !button->isActive());
+
+    qInfo().noquote() << log.join(QLatin1Char('\n'));
+    return ok;
+}
+
 int runUiShot(const QString& outPrefix)
 {
     std::signal(SIGTERM, dumpStackAndExit);
@@ -5911,6 +6081,8 @@ int runUiShot(const QString& outPrefix)
         return runAnimationUi(window, engine, penTap, capture, settle, outPrefix) ? 0 : 2;
     if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("model"))
         return runModelUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("invoke"))
+        return runInvokeUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
     {
         QStringList log;
         bool penOk = true;

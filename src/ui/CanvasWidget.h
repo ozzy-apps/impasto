@@ -43,6 +43,8 @@ public:
     QPointF widgetToCanvas(const QPointF& logical) const;
     QPointF canvasToWidget(const QPointF& canvas) const;
 
+    void setInvokeOverlay(const QRect& frame, const QRect& resultBounds, const QImage& result);
+
     // ---- eyedropper as a one-shot tool (Alt and right-click always pick)
     void armEyedropper(bool armed);
     bool eyedropperArmed() const { return m_eyedropperArmed; }
@@ -340,6 +342,9 @@ private:
     int hitHandle(const QPointF& logical) const;
     void applyTransform();
     void drawOverlay(QPainter& p);
+    void drawInvokeOverlay(QPainter& p);
+    QRect m_invokeFrame, m_invokeResultBounds;
+    QImage m_invokeResult;
 
     CanvasEngine* m_engine;
     ToolState* m_tools;

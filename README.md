@@ -19,9 +19,17 @@
 | --- | --- |
 | ![Impasto brush library beside an alpine painting](docs/product/brushes.png) | ![Four sample artworks in the Impasto gallery](docs/product/gallery.png) |
 
+## Generate with InvokeAI
+
+In Impasto 0.14.0, press the Invoke mark on the toolbar to open the Invoke panel on the left, and connect to your running InvokeAI server. Denoising strength, steps, CFG scale and render size are pen-sized sliders, and Ctrl+Enter in the prompt generates. Use the whole canvas or the bounds of a selection for image-to-image. In **Inpaint**, choose **Paint mask** and use your usual brushes to mark the area to replace. Review the result on the canvas, then choose **Add as layer** or **Discard**.
+
+The first integration supports Anima models with a Qwen3 0.6B encoder and a compatible VAE. It was tested with CakePop, Anima Qwen3 0.6B Text Encoder, and Anima QwenImage VAE. [Setup and controls](docs/guide.md#invokeai).
+
+![A CakePop inpaint preview in Impasto, with the generation frame and Add as Layer button visible](docs/product/invoke-inpaint.png)
+
 ## Make yourself at home
 
-**Version 0.13.0** places the 3D model live on the canvas, in a frame where it can still be turned, posed and lit before it becomes a layer. Linux only for now; Windows stays on 0.12.0.
+The published **version 0.13.0** places the 3D model live on the canvas, in a frame where it can still be turned, posed and lit before it becomes a layer. Linux only for now; Windows stays on 0.12.0.
 
 | Platform | Download | Start painting |
 | --- | --- | --- |

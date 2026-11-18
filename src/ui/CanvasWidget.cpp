@@ -324,6 +324,37 @@ void CanvasWidget::paintGL()
     drawOverlay(p);
 }
 
+void CanvasWidget::setInvokeOverlay(const QRect& frame, const QRect& resultBounds, const QImage& result)
+{
+    m_invokeFrame = frame;
+    m_invokeResultBounds = resultBounds;
+    m_invokeResult = result;
+    update();
+}
+
+void CanvasWidget::drawInvokeOverlay(QPainter& p)
+{
+    if (m_invokeFrame.isEmpty() && m_invokeResult.isNull())
+        return;
+
+    p.save();
+    QTransform transform;
+    transform.scale(1.0 / devicePixelRatioF(), 1.0 / devicePixelRatioF());
+    p.setWorldTransform(viewTransform() * transform);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    if (!m_invokeResult.isNull())
+        p.drawImage(m_invokeResultBounds, m_invokeResult);
+    const QRect frame = m_invokeResult.isNull() ? m_invokeFrame : m_invokeResultBounds;
+    if (!frame.isEmpty()) {
+        QPen outline(theme::accent, 2.0, Qt::DashLine);
+        outline.setCosmetic(true);
+        p.setPen(outline);
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(frame));
+    }
+    p.restore();
+}
+
 void CanvasWidget::drawOverlay(QPainter& p)
 {
     if (!m_engine->hasDocument())
@@ -377,6 +408,7 @@ void CanvasWidget::drawOverlay(QPainter& p)
         }
     }
 
+    drawInvokeOverlay(p);
     drawGuides(p);
     drawCropOverlay(p);
     drawModelOverlay(p);

@@ -111,7 +111,9 @@ const QHash<QString, QString>& iconBodies()
         {QStringLiteral("film"), QStringLiteral("<rect x='3.500' y='5.500' width='17' height='13' rx='2'/><path d='M7.500 5.500v13M16.500 5.500v13M3.500 12h4M16.500 12h4'/>")},
         {QStringLiteral("cube"), QStringLiteral("<path d='M12 3.500l7.500 4.200v8.600L12 20.500l-7.500-4.200V7.700z'/><path d='M4.500 7.700L12 12l7.500-4.300M12 12v8.500'/>")},
         {QStringLiteral("stabilise"), QStringLiteral("<path d='M3.500 9c1.800-3.500 3.200 3.500 5 0s3.200 3.500 5 0 3.200 3.500 5 0 2 0 2 0'/><path d='M3.500 16.500h17'/>")},
-        {QStringLiteral("taper"), QStringLiteral("<path d='M3 12c5.500-3.800 12-3.800 18 0-6 3.800-12.500 3.800-18 0z'/>")},
+        // Invoke's mark, its line only: two brackets and the stroke between them.
+        {QStringLiteral("invoke"), QStringLiteral("<path d='M10 8H5V5h14v3h-4M14 16h5v3H5v-3h4M10 8l4 8' stroke-width='1.900'/>")},
+        {QStringLiteral("taper"),QStringLiteral("<path d='M3 12c5.500-3.800 12-3.800 18 0-6 3.800-12.500 3.800-18 0z'/>")},
         {QStringLiteral("tip-shape"),
          QStringLiteral("<path d='M12 3.500c2 0 2.500 2.300 4.300 3 1.900.700 3.900-.200 4.200 2 .300 2-1.700 2.700-2 4.500-.300 1.900 1.300 3.700-.200 5-1.600 1.300-3.200-.300-5 0"
                         "-1.900.300-3 2.300-4.900 1.400-1.800-.900-.900-2.900-2-4.400-1.100-1.500-3.300-1.700-3-3.700.300-2 2.500-1.600 3.600-3 1.200-1.500 1.200-4.800 5-4.800z'/>")},

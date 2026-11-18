@@ -22,6 +22,7 @@ class TimelineBar;
 class ModelPanel;
 class ShortcutSheet;
 class QAbstractButton;
+class InvokePanel;
 class QLabel;
 class Toast;
 class ToolState;
@@ -76,6 +77,8 @@ private:
     void buildTopBar();
     void buildSideBar();
     void buildPopovers();
+    void buildInvokePanel();
+    void setInvokeOpen(bool open);
     void buildShortcuts();
     void layoutOverlays();
     void syncToolButtons();
@@ -129,6 +132,9 @@ private:
     ToolState* m_tools;
     QWidget* m_host = nullptr;
     CanvasWidget* m_canvas = nullptr;
+    InvokePanel* m_invokePanel = nullptr;
+    IconButton* m_invokeBtn = nullptr;
+    bool m_invokeSuppressed = false;
 
     Panel* m_topBar = nullptr;
     Panel* m_sideBar = nullptr;

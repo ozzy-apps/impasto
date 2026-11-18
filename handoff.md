@@ -1,3 +1,38 @@
+# Impasto 0.14.0 · InvokeAI integration · 2026-11-18
+
+Impasto is a C++20, Qt 6 Widgets and OpenGL 4.3 painting app for Linux and Windows. CMake is the source of the semantic version. This iteration adds an Invoke dock to the painting workspace and links Qt Network. The integration uses the running InvokeAI instance and its registered models. Accepted pixels are stored as raster layers in existing Impasto documents.
+
+## Built
+
+- The **Invoke** toolbar button opens a dock with server URL, optional session-only bearer token, Anima model and components, prompt, strength, and advanced generation settings. The address and chosen model and rendering settings are remembered in QSettings.
+- Use the full canvas or capture the bounds of an Impasto selection to set a frame. Inpainting creates or reopens an editable top-level **Invoke Mask** layer. Generate hides it and uses painted alpha for the mask. Normal brushes and erasers work on this layer.
+- **Generate** uploads a cropped canvas snapshot and optional mask, queues an Anima invocation graph on Invoke, then downloads the result. The canvas overlay previews the result in place and supports comparison. **Add as Layer** creates an undoable top-level raster layer. The inpaint patch is clipped to the original paint coverage. Opening another artwork, resizing or flipping the canvas invalidates an old preview or pending result.
+- The Flatpak manifest grants network access. The README and user guide cover the setup and show a live inpaint preview.
+
+## Implementation and verification
+
+- [InvokeClient](src/invoke/InvokeClient.cpp) handles Qt Network requests, model discovery, uploads, Anima graph creation, job polling and cancellation, and image downloads. The graph uses Anima's model loader, native VAE encode/decode and denoiser with an optional denoise-mask node. Invoke receives black for regeneration and white for preservation. Poll serials prevent late replies from interfering with cancellation.
+- [InvokePanel](src/ui/InvokePanel.cpp) controls frame placement, input snapshots and result acceptance. [CanvasWidget](src/ui/CanvasWidget.cpp) draws the dashed frame and preview using the existing viewport transform. [CanvasEngine](src/engine/CanvasEngine.cpp) supplies cropped readback and top-level layer placement.
+- Verified model discovery and live generation against InvokeAI 7.0.0-alpha.4 on localhost using **CakePop**, **Anima Qwen3 0.6B Text Encoder**, and **Anima QwenImage VAE**. The live check drove the dock and viewport, verified preview before committing, accepted both modes as new layers, checked undo, and compared all pixels outside the painted mask. The README screenshot was captured during that check. A separate mock server exercised cancellation, discard, editing the server address, and opening a same-sized replacement document while a job was queued.
+- The engine self-test passed on Mesa llvmpipe. The large-canvas sparse-layer section reported failures on NVIDIA on both the 0.13.0 baseline and 0.14.0 builds. llvmpipe skips that sparse-storage path. The live CakePop checks used the NVIDIA desktop.
+- Follow the Linux build steps in the [user guide](docs/guide.md#build-and-run). This machine's runnable 0.14.0 build is in dist/impasto-0.14.0.
+
+## UI pass (2026-11-18, later the same day)
+
+- The Qt dock is gone. `InvokePanel` is now a `Panel` drawn opaque, 340 px wide, laid out by `MainWindow::layoutOverlays` beside the side bar from under the top bar to the bottom; `MainWindow::setInvokeOpen` shows and hides it (top-bar button, its close button, Tab/gallery suppression, `showForScreenshot("invoke")`). The timeline starts right of it when both are up.
+- The top-bar button shows the new `invoke` line icon in `Theme.cpp` (Invoke's mark without its yellow square).
+- Every number is a Brush Lab-style slider row with a value pill (`InvokePanel::Setting`): Denoising strength 5–100 %, Steps 4–100, CFG 1–15 in 0.5, Render size 512–2048 in 64, Mask feather 0–64 px (inpaint only; a three-pass box blur of the coverage used to lay in the result, the mask sent to Invoke is unchanged). Mode is a `SegmentBar`, frame and mask choices are text `IconButton`s, Seed has **Reuse** for the last result's seed, Compare/Result replaces the preview check box. Prompt, negative prompt, mode and feather are now remembered too.
+- Ctrl+Enter (and keypad Enter) in either prompt generates or says why it cannot: the panel's event filter accepts the `ShortcutOverride`, so the window's own Ctrl+Enter shortcut does not take it.
+- Check: `IMPASTO_ONLY=invoke build/impasto --ui-shot out/ui` (26 checks, writes `ui-invoke.png` and `ui-invoke-bottom.png`); `IMPASTO_INVOKE_LIVE=1` also connects to Invoke at the default address and lists its models, without generating. The full `--ui-shot` run passed. The key check replays Qt's ShortcutOverride-then-KeyPress order on the prompt; real keys through the shortcut map were not driven (the QPA headers are not installed). Not regenerated after this pass: a live generation, so the feather on a real result has not been seen.
+
+## Next steps
+
+1. Validate packaged builds on Linux and Windows, including TLS and the Flatpak connection. This iteration provides a local Linux build.
+2. Test against Invoke 6.14.x and authenticated Invoke 7 servers before advertising compatibility with them. The first version targets still canvases and the standard Anima Qwen3 0.6B path.
+3. If requested, add outpainting and control layers as separate workflows. Preserve the pixel mapping, preview and undo semantics of the first integration.
+
+---
+
 # Impasto 0.13.0 — the 3D model live on the canvas (2026-11-04)
 
 Linux-only release (DEB, AppImage, Flatpak): https://github.com/ozzy-apps/impasto/releases/tag/v0.13.0. Windows stays on 0.12.0 (the cross toolchain in `/tmp` is gone). *Place* in the 3D panel no longer drops a canvas-sized layer at once: it starts a placement session on the canvas, in the manner of Clip Studio's 3D layers.

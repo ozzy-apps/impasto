@@ -9,6 +9,7 @@
 #include "ui/CanvasWidget.h"
 #include "ui/ColorPanel.h"
 #include "ui/Gallery.h"
+#include "ui/InvokePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/NewCanvasDialog.h"
 #include "ui/ReferencePanel.h"
@@ -314,6 +315,7 @@ MainWindow::MainWindow(CanvasEngine* engine, QWidget* parent) : QMainWindow(pare
     buildTopBar();
     buildSideBar();
     buildPopovers();
+    buildInvokePanel();
     m_timeline = new TimelineBar(m_engine, m_host);
     m_timeline->hide();
     connect(m_timeline, &TimelineBar::message, this, [this](const QString& text) { m_toast->showMessage(text); });
@@ -499,6 +501,10 @@ void MainWindow::buildTopBar()
     m_steadyBtn->setObjectName(QStringLiteral("steady-button"));
     m_steadyBtn->setToolTip(tr("Stabilisation of the brush in hand (Y)"));
     l->addWidget(m_steadyBtn);
+    m_invokeBtn = new IconButton(QStringLiteral("invoke"), m_topBar);
+    m_invokeBtn->setObjectName(QStringLiteral("invoke-button"));
+    m_invokeBtn->setToolTip(tr("Invoke: generate from this canvas with InvokeAI"));
+    l->addWidget(m_invokeBtn);
     l->addStretch();
 
     const char* icons[3] = {"brush", "smudge", "eraser"};
@@ -702,9 +708,46 @@ void MainWindow::restorePanels()
     }
 }
 
+void MainWindow::buildInvokePanel()
+{
+    // A column along the left, beside the side bar. Unlike the panels that hang
+    // from the top bar it stays up while painting, for the inpaint mask.
+    m_invokePanel = new InvokePanel(m_engine, m_canvas, m_host);
+    m_invokePanel->hide();
+    connect(m_invokeBtn, &QAbstractButton::clicked, this, [this] {
+        if (!editing())
+            setInvokeOpen(m_invokePanel->isHidden());
+        m_canvas->setFocus();
+    });
+    connect(m_invokePanel, &InvokePanel::closeRequested, this, [this] {
+        setInvokeOpen(false);
+        m_canvas->setFocus();
+    });
+    connect(m_invokePanel, &InvokePanel::paintMaskRequested, this, [this] {
+        m_canvas->setSelectMode(false);
+        m_canvas->armFill(false);
+        m_canvas->setGradientMode(false);
+        m_canvas->setTextMode(false);
+        m_tools->setTool(StrokeTool::Brush);
+    });
+}
+
+void MainWindow::setInvokeOpen(bool open)
+{
+    m_invokeSuppressed = false;
+    m_invokePanel->setVisible(open);
+    m_invokeBtn->setActive(open);
+    m_invokePanel->setOverlayVisible(open);
+    layoutOverlays();
+}
+
 void MainWindow::setPanelsSuppressed(bool suppressed)
 {
     if (suppressed) {
+        if (!m_invokePanel->isHidden()) {
+            setInvokeOpen(false);
+            m_invokeSuppressed = true;
+        }
         for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
             if (p->isVisible() && p->isPinned() && !m_suppressed.contains(p)) {
                 m_suppressed.push_back(p);
@@ -715,6 +758,8 @@ void MainWindow::setPanelsSuppressed(bool suppressed)
     }
     if ((m_gallery && m_gallery->isVisible()) || !m_interfaceVisible)
         return;   // still something in the way
+    if (m_invokeSuppressed)
+        setInvokeOpen(true);
     const QVector<Popover*> back = m_suppressed;
     m_suppressed.clear();
     for (Popover* p : back) {
@@ -895,6 +940,7 @@ void MainWindow::showForScreenshot(const QString& what)
         m_brushLab->done();
     closePopovers();
     hideGallery();
+    setInvokeOpen(what == QLatin1String("invoke"));
     m_canvas->setSelectMode(false);
     m_canvas->setGradientMode(false);
     m_canvas->setTextMode(false);
@@ -1005,8 +1051,13 @@ void MainWindow::layoutOverlays()
         const QSize eb = m_editBar->sizeHint();
         m_editBar->setGeometry((s.width() - eb.width()) / 2, s.height() - eb.height() - 28 - lift, eb.width(), eb.height());
     }
+    int left = sb.width() + 10;
+    if (m_invokePanel && m_invokePanel->isVisible()) {
+        const int top = kTopBarHeight + 10;
+        m_invokePanel->setGeometry(sb.width() + 8, top, InvokePanel::kWidth, std::max(320, s.height() - top - 12));
+        left = m_invokePanel->geometry().right() + 12;
+    }
     if (m_timeline && m_timeline->isVisible()) {
-        const int left = sb.width() + 10;
         m_timeline->setGeometry(left, s.height() - m_timeline->preferredHeight() - 12, s.width() - left - 12, m_timeline->preferredHeight());
     }
     for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
@@ -1638,11 +1689,12 @@ bool MainWindow::editing() const
 void MainWindow::setEditingUi(bool on)
 {
     for (QWidget* w : std::initializer_list<QWidget*>{m_fileBtn, m_actionsBtn, m_adjustBtn, m_transformBtn, m_guidesBtn, m_steadyBtn, m_selectBtn, m_toolBtn[0],
-                                                      m_toolBtn[1], m_toolBtn[2], m_refBtn, m_modelBtn, m_layersBtn, m_colorBtn, m_pickBtn,
+                                                      m_toolBtn[1], m_toolBtn[2], m_refBtn, m_modelBtn, m_layersBtn, m_colorBtn, m_pickBtn, m_invokeBtn,
                                                       m_sizeSlider, m_opacitySlider})
         w->setEnabled(!on);
     for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop})
         p->setEnabled(!on);   // a pinned panel waits while an edit is in progress
+    m_invokePanel->setEnabled(!on);
     if (m_timeline) {
         if (on)
             m_timeline->play(false);

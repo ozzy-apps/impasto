@@ -243,7 +243,7 @@ public:
     int activeLayerId() const { return m_activeId; }
     void setActiveLayer(int id);
     static int maxGroupDepth() { return 4; }
-    int addLayer();
+    int addLayer(const QString& name = {}, bool onTop = false);
     int addGroup();
     // Wraps a layer (or a whole group) in a new group / dissolves a group,
     // keeping its members / replaces a group by one layer showing the same.
@@ -253,7 +253,7 @@ public:
     void setLayerCollapsed(int id, bool collapsed);
     // `topLeft` places the image; left at its default the image is centred.
     int addImageLayer(const QImage& image, const QString& name, const QPoint& topLeft = QPoint(INT_MIN, INT_MIN),
-                      const QString& undoName = QString());
+                      const QString& undoName = QString(), bool onTop = false);
     void duplicateLayer(int id);
     void removeLayer(int id);
     // Places a layer, or a group with everything in it, inside `parentId`
@@ -302,6 +302,7 @@ public:
     // layer's mask instead of its pixels.
     bool maskEditing() const;
     void setMaskEditing(bool on);
+    QImage rasterLayerImage(int id, const QRect& region);
     QByteArray layerPixels(int id);
     // The same for one part of the canvas only. `holding`, when given,
     // receives the smallest rectangle around the blocks of the layer that
@@ -483,7 +484,7 @@ public:
     void prepareFrame(bool wantMipmaps);   // recomposites whatever changed
     void finish();                         // blocks until the GPU has caught up (benchmarks)
     GLuint resultTexture() const { return m_result.id(); }
-    QImage renderImage();
+    QImage renderImage(const QRect& region = {});
     QByteArray compositePixels();   // the same at full precision: RGBA16F, premultiplied, the whole canvas
     QColor pickColor(const QPoint& canvasPos);
     QImage brushPreview(const BrushPreset& preset, const QSize& size, const QColor& color, float scale);
@@ -495,6 +496,7 @@ signals:
     void layersChanged();
     void selectionChanged();
     void documentChanged();
+    void canvasFlipped();
     void modifiedChanged(bool modified);
     void message(const QString& text);
 
