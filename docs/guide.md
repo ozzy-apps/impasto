@@ -52,10 +52,15 @@ takes over Sketchbook's settings, brushes and palettes.)
 2. Choose an **Anima model** and write a prompt, and a negative prompt if you want one. **Ctrl+Enter** in either prompt generates. On the first connection CakePop, Anima Qwen3 0.6B Text Encoder and Anima QwenImage VAE are chosen if they are installed; **Components** at the bottom of the panel changes the encoder and VAE.
 3. Set the numbers with the sliders, which are sized for the pen: **Denoising strength** (how much the picture may change), **Steps**, **CFG scale** (how closely the prompt is followed; 1 turns the negative prompt off), **Render size** (the longer side Invoke paints) and, for inpainting, **Mask feather**. **Sampler** and **Seed** are below them; leave the seed empty for a new one each time, or press **Reuse** for the seed of the last result. The prompt and settings are remembered.
 4. Generate from the **Full canvas**, or make a selection with Impasto's selection tool and press **Selection** to use its bounds as the frame. You can then deselect or continue painting.
-5. For **Inpaint**, choose **Paint mask**. Paint on the Invoke Mask layer with any brush. Stroke opacity determines mask coverage, so a soft brush gives a soft edge and the eraser removes coverage. Generate hides this layer and sends its coverage as a mask. **Mask feather** softens the edge where the result meets your painting. Press **Paint mask** again to edit it.
+5. Under **Masks and guides**, add the layers that tell Invoke where and how. Each is a layer of the artwork, painted with any brush: the opacity of the strokes is what counts, so a soft brush gives a soft edge and the eraser takes coverage away. Each has a row in the panel with an eye (use it when generating, or leave it out, without hiding the layer), **Paint** (paint on it again) and a bin (delete it; undo brings it back). The layers are saved with the artwork.
+   - **+ Inpaint** adds an inpaint mask: only where it is painted is generated anew, and the result is laid in there. With several masks, whatever any of them covers. **Mask feather** softens the edge where the result meets your painting. **Components → Inpaint** can add Invoke's LLLite inpainting adapter, which helps the new part fit what is around it.
+   - **+ Region** adds a region with its own prompt (and negative prompt): it applies where the region is painted, on top of the main prompt, the way Invoke's regional guidance does.
+   - **+ Control** adds a layer of lines for a ControlNet-LLLite adapter to follow (LLLite Sketch by default), with how firmly (**Strength**) and for how much of the steps (**Until**). Lines on a transparent layer count as they are; on a layer painted edge to edge, its dark marks count. While a control layer is shown it is also part of the picture; hide it in the layers panel to use it only as a guide.
+
+   Masks and regions are drawn half see-through so the picture shows under them, and Generate leaves them out of the picture it sends. They do show in exports: hide them before exporting. An Invoke Mask layer from 0.14 counts as an inpaint mask.
 6. Choose **Generate**. You can keep painting while Invoke works. **Compare** hides the result to show the canvas under it, **Result** brings it back; **Add as layer** keeps it as a new top-level layer, **Discard** throws it away. Inpainting adds a patch limited to the mask. Accepted results can be undone normally.
 
-Invoke receives a copy of the visible artwork inside the frame and, in inpainting mode, the mask. It stores the generated image in its image library. Impasto saves accepted layers with the artwork. This first version handles still canvases and was tested with InvokeAI 7.0.0-alpha.4.
+Invoke receives a copy of the visible artwork inside the frame (without masks and regions) and the masks, regions and control lines in use. It stores the generated image in its image library. Impasto saves accepted layers with the artwork. This first version handles still canvases and was tested with InvokeAI 7.0.0-alpha.4.
 
 ## Build and run
 
@@ -140,9 +145,13 @@ that script for what it needs).
 - **Palettes**: sets of colours of your own, ten to a row. Tap an empty slot
   to keep the current colour there; rest on a swatch to pick it up, then drag
   it to another slot (two swatches change places) or let go to replace or
-  remove it. The *Palettes* page lists them all: make one empty, from what is
-  on the canvas, from the reference picture or from any picture file; rename,
-  duplicate, delete; tap a name to choose which one stays under the pickers.
+  remove it. The *Palettes* page lists them all: make one empty or *From a
+  Picture…*; rename, duplicate, delete; tap a name to choose which one stays
+  under the pickers. *Palette from a Picture* fills the window: the canvas,
+  the reference picture or a picture file, large, with a mark where each
+  colour was found; drag *How many* for fewer or more colours (2 to 60), tap
+  a colour under the picture to leave it out, name it, and *Save Palette*
+  (or *Save and Export…* to also write a `.gpl` or `.swatches` file).
   Carry a swatch from one palette onto another in the list and a copy goes
   in there (into the next free slot if the one under the pen is taken).
   Procreate palettes (`.swatches`), GIMP palettes (`.gpl`), lists of hex codes

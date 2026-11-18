@@ -6,6 +6,7 @@
 
 #include <QComboBox>
 #include <QGridLayout>
+#include <QJsonArray>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -157,7 +158,326 @@ bool isCtrlEnter(const QKeyEvent* k)
     return (k->key() == Qt::Key_Return || k->key() == Qt::Key_Enter) && (k->modifiers() & Qt::ControlModifier);
 }
 
+QString roleName(InvokePanel::Guide kind)
+{
+    switch (kind) {
+    case InvokePanel::Guide::Inpaint: return InvokePanel::tr("Inpaint mask");
+    case InvokePanel::Guide::Region: return InvokePanel::tr("Region");
+    case InvokePanel::Guide::Control: return InvokePanel::tr("Control");
+    case InvokePanel::Guide::None: break;
+    }
+    return {};
+}
+
+QString roleKey(InvokePanel::Guide kind)
+{
+    switch (kind) {
+    case InvokePanel::Guide::Inpaint: return QStringLiteral("inpaint");
+    case InvokePanel::Guide::Region: return QStringLiteral("region");
+    case InvokePanel::Guide::Control: return QStringLiteral("control");
+    case InvokePanel::Guide::None: break;
+    }
+    return {};
+}
+
+// The adapter a control layer uses unless another is chosen: the sketch one,
+// which reads lines drawn by hand, when the server has it.
+QString defaultControlModel(const QJsonArray& models)
+{
+    QString key;
+    for (const QJsonValue& v : models) {
+        const QJsonObject m = v.toObject();
+        if (key.isEmpty() || m.value(QStringLiteral("name")).toString().contains(QLatin1String("sketch"), Qt::CaseInsensitive))
+            key = m.value(QStringLiteral("key")).toString();
+    }
+    return key;
+}
+
+// Lines for a control adapter: white on black. A layer of lines on
+// transparency gives its coverage; a layer painted edge to edge (a scan, a
+// drawing on white) gives its dark marks.
+QImage controlLines(const QImage& painted)
+{
+    const QImage rgba = painted.convertToFormat(QImage::Format_ARGB32);
+    if (rgba.isNull())
+        return {};
+    qint64 opaque = 0;
+    for (int y = 0; y < rgba.height(); ++y) {
+        const auto* px = reinterpret_cast<const QRgb*>(rgba.constScanLine(y));
+        for (int x = 0; x < rgba.width(); ++x)
+            opaque += qAlpha(px[x]) > 240;
+    }
+    const bool filled = opaque > qint64(rgba.width()) * rgba.height() * 9 / 10;
+    QImage out(rgba.size(), QImage::Format_RGB32);
+    bool any = false;
+    for (int y = 0; y < rgba.height(); ++y) {
+        const auto* px = reinterpret_cast<const QRgb*>(rgba.constScanLine(y));
+        auto* o = reinterpret_cast<QRgb*>(out.scanLine(y));
+        for (int x = 0; x < rgba.width(); ++x) {
+            int v;
+            if (filled)
+                v = 255 - qGray(px[x]);
+            else
+                v = qAlpha(px[x]);
+            any |= v > 8;
+            o[x] = qRgb(v, v, v);
+        }
+    }
+    return any ? out : QImage();
+}
+
 } // namespace
+
+namespace invokeui {
+
+// One mask or guide in the panel: its name and what it is, whether Generate
+// uses it, a button to paint it, and what else it needs (a region's prompt, a
+// control's adapter and strength).
+class GuideRow : public QWidget {
+public:
+    std::function<void(int id, const QJsonObject& invoke, bool now)> changed;
+    std::function<void(int id)> paint, remove;
+
+    GuideRow(int id, InvokePanel::Guide kind, QWidget* parent) : QWidget(parent), m_id(id), m_kind(kind)
+    {
+        setObjectName(QStringLiteral("invoke-guide-%1").arg(id));
+        auto* v = new QVBoxLayout(this);
+        v->setContentsMargins(10, 6, 6, 10);
+        v->setSpacing(6);
+        auto* top = new QHBoxLayout;
+        top->setSpacing(2);
+        auto* names = new QVBoxLayout;
+        names->setSpacing(0);
+        m_name = new QLabel(this);
+        m_name->setFont(theme::font(13, QFont::DemiBold));
+        m_role = new QLabel(roleName(kind), this);
+        m_role->setFont(theme::font(11));
+        m_role->setStyleSheet(QStringLiteral("color: #a0a0a8;"));
+        names->addWidget(m_name);
+        names->addWidget(m_role);
+        top->addLayout(names, 1);
+        m_eye = new IconButton(QStringLiteral("eye"), this, 18);
+        m_eye->setObjectName(QStringLiteral("invoke-guide-use"));
+        m_eye->setToolTip(InvokePanel::tr("Use it when generating, or leave it out"));
+        m_eye->setFixedSize(34, 34);
+        m_paint = new IconButton(QString(), this);
+        m_paint->setText(InvokePanel::tr("Paint"));
+        m_paint->setObjectName(QStringLiteral("invoke-guide-paint"));
+        m_paint->setToolTip(InvokePanel::tr("Paint on this layer with any brush; the eraser takes paint away"));
+        m_paint->setMinimumHeight(34);
+        m_remove = new IconButton(QStringLiteral("trash"), this, 18);
+        m_remove->setObjectName(QStringLiteral("invoke-guide-remove"));
+        m_remove->setToolTip(InvokePanel::tr("Delete this layer (it can be undone)"));
+        m_remove->setFixedSize(34, 34);
+        top->addWidget(m_eye);
+        top->addWidget(m_paint);
+        top->addWidget(m_remove);
+        v->addLayout(top);
+        connect(m_eye, &QAbstractButton::clicked, this, [this] {
+            m_data[QStringLiteral("enabled")] = !enabled();
+            showEnabled();
+            emitChange(true);
+        });
+        connect(m_paint, &QAbstractButton::clicked, this, [this] {
+            if (paint)
+                paint(m_id);
+        });
+        connect(m_remove, &QAbstractButton::clicked, this, [this] {
+            if (remove)
+                remove(m_id);
+        });
+
+        if (kind == InvokePanel::Guide::Region) {
+            m_prompt = new QPlainTextEdit(this);
+            m_prompt->setObjectName(QStringLiteral("invoke-guide-prompt"));
+            m_prompt->setPlaceholderText(InvokePanel::tr("What goes where this is painted"));
+            m_prompt->setStyleSheet(QLatin1String(kTextStyle));
+            m_prompt->setFixedHeight(58);
+            m_prompt->setTabChangesFocus(true);
+            v->addWidget(m_prompt);
+            m_negative = new QLineEdit(this);
+            m_negative->setObjectName(QStringLiteral("invoke-guide-negative"));
+            m_negative->setPlaceholderText(InvokePanel::tr("What to keep out of it (negative)"));
+            m_negative->setMinimumHeight(30);
+            v->addWidget(m_negative);
+            connect(m_prompt, &QPlainTextEdit::textChanged, this, [this] {
+                m_data[QStringLiteral("prompt")] = m_prompt->toPlainText();
+                emitChange(false);
+            });
+            connect(m_negative, &QLineEdit::textEdited, this, [this] {
+                m_data[QStringLiteral("negative")] = m_negative->text();
+                emitChange(false);
+            });
+        } else if (kind == InvokePanel::Guide::Control) {
+            m_model = new QComboBox(this);
+            m_model->setObjectName(QStringLiteral("invoke-guide-model"));
+            m_model->setToolTip(InvokePanel::tr("The ControlNet-LLLite adapter that reads the lines"));
+            m_model->setMinimumHeight(32);
+            m_model->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+            m_model->setMinimumContentsLength(10);
+            m_model->setPlaceholderText(InvokePanel::tr("Connect to choose an adapter"));
+            v->addWidget(m_model);
+            connect(m_model, &QComboBox::activated, this, [this] {
+                m_data[QStringLiteral("model")] = m_model->currentData().toString();
+                emitChange(true);
+            });
+            m_weight = addSlider(v, InvokePanel::tr("Strength"), InvokePanel::tr("How firmly the lines are followed"), "invoke-guide-weight",
+                                 &m_weightPill, QStringLiteral("weight"), 0.0, 2.0, 1.0);
+            m_end = addSlider(v, InvokePanel::tr("Until"), InvokePanel::tr("How far through the steps the lines are followed; less leaves the last details free"),
+                              "invoke-guide-end", &m_endPill, QStringLiteral("end"), 0.0, 1.0, 1.0);
+        }
+    }
+
+    int id() const { return m_id; }
+    InvokePanel::Guide kind() const { return m_kind; }
+    bool enabled() const { return m_data.value(QStringLiteral("enabled")).toBool(true); }
+    const QJsonObject& data() const { return m_data; }
+
+    void update(const LayerInfo& layer, bool active, const QJsonArray& controlModels)
+    {
+        if (layer.invoke.isEmpty())
+            m_data = {{QStringLiteral("role"), roleKey(m_kind)}};   // an Invoke Mask from before masks were tagged
+        else
+            m_data = layer.invoke;
+        m_name->setText(layer.name);
+        if (m_active != active) {
+            m_active = active;
+            QWidget::update();
+        }
+        showEnabled();
+        if (m_prompt && !m_prompt->hasFocus()) {
+            const QString text = m_data.value(QStringLiteral("prompt")).toString();
+            if (m_prompt->toPlainText() != text) {
+                const QSignalBlocker b(m_prompt);
+                m_prompt->setPlainText(text);
+            }
+        }
+        if (m_negative && !m_negative->hasFocus())
+            m_negative->setText(m_data.value(QStringLiteral("negative")).toString());
+        if (m_model) {
+            const QSignalBlocker b(m_model);
+            m_model->clear();
+            for (const QJsonValue& v : controlModels) {
+                const QJsonObject m = v.toObject();
+                m_model->addItem(m.value(QStringLiteral("name")).toString(), m.value(QStringLiteral("key")).toString());
+            }
+            QString key = m_data.value(QStringLiteral("model")).toString();
+            if (key.isEmpty())
+                key = defaultControlModel(controlModels);
+            const int at = m_model->findData(key);
+            if (at >= 0) {
+                m_model->setCurrentIndex(at);
+            } else if (!key.isEmpty()) {
+                m_model->insertItem(0, InvokePanel::tr("Not on this server"), key);
+                m_model->setCurrentIndex(0);
+            }
+            m_model->setEnabled(m_model->count() > 0);
+        }
+        for (auto [slider, pill, field, lo, hi, fallback] :
+             {std::tuple{m_weight, m_weightPill, QStringLiteral("weight"), 0.0, 2.0, 1.0}, std::tuple{m_end, m_endPill, QStringLiteral("end"), 0.0, 1.0, 1.0}}) {
+            if (!slider)
+                continue;
+            const double value = m_data.value(field).toDouble(fallback);
+            slider->setValue(float((value - lo) / (hi - lo)));
+            pill->setText(field == QLatin1String("end") ? QStringLiteral("%1 %").arg(int(std::lround(value * 100))) : QString::number(value, 'f', 2));
+        }
+    }
+
+    void setEditable(bool on)
+    {
+        for (QWidget* w : std::initializer_list<QWidget*>{m_eye, m_paint, m_remove, m_prompt, m_negative, m_model, m_weight, m_end})
+            if (w)
+                w->setEnabled(on);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(m_active ? theme::accent : QColor(0x48, 0x48, 0x4d), m_active ? 1.5 : 1.0));
+        p.setBrush(QColor(0x1f, 0x1f, 0x22));
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.75, 0.75, -0.75, -0.75), 10, 10);
+    }
+
+private:
+    Slider* addSlider(QVBoxLayout* v, const QString& label, const QString& tip, const char* name, QLabel** pill, const QString& field,
+                      double lo, double hi, double fallback)
+    {
+        auto* top = new QHBoxLayout;
+        top->addWidget(caption(label, this));
+        top->addStretch();
+        *pill = new QLabel(this);
+        (*pill)->setObjectName(QLatin1String(name) + QStringLiteral("-value"));
+        (*pill)->setFont(theme::font(12, QFont::Medium));
+        (*pill)->setAlignment(Qt::AlignCenter);
+        (*pill)->setMinimumWidth(56);
+        (*pill)->setStyleSheet(QStringLiteral("background: #141416; border-radius: 9px; padding: 2px 9px;"));
+        top->addWidget(*pill);
+        v->addLayout(top);
+        auto* slider = new Slider(this);
+        slider->setObjectName(QLatin1String(name));
+        slider->setToolTip(tip);
+        slider->setFixedHeight(30);
+        v->addWidget(slider);
+        QLabel* shown = *pill;
+        Q_UNUSED(fallback);
+        connect(slider, &Slider::valueChanged, this, [this, shown, field, lo, hi](float f) {
+            // Strength in hundredths, the end in whole percent.
+            const double step = field == QLatin1String("end") ? 0.01 : 0.05;
+            const double value = std::round((lo + double(f) * (hi - lo)) / step) * step;
+            m_data[field] = value;
+            shown->setText(field == QLatin1String("end") ? QStringLiteral("%1 %").arg(int(std::lround(value * 100))) : QString::number(value, 'f', 2));
+            emitChange(false);
+        });
+        connect(slider, &Slider::released, this, [this] { emitChange(true); });
+        return slider;
+    }
+    void showEnabled()
+    {
+        m_eye->setIconName(enabled() ? QStringLiteral("eye") : QStringLiteral("eye-off"));
+        m_eye->setActive(enabled());
+        m_name->setStyleSheet(enabled() ? QString() : QStringLiteral("color: #77777d;"));
+    }
+    void emitChange(bool now)
+    {
+        if (changed)
+            changed(m_id, m_data, now);
+    }
+
+    int m_id;
+    InvokePanel::Guide m_kind;
+    QJsonObject m_data;
+    bool m_active = false;
+    QLabel *m_name, *m_role;
+    IconButton *m_eye, *m_paint, *m_remove;
+    QPlainTextEdit* m_prompt = nullptr;
+    QLineEdit* m_negative = nullptr;
+    QComboBox* m_model = nullptr;
+    Slider *m_weight = nullptr, *m_end = nullptr;
+    QLabel *m_weightPill = nullptr, *m_endPill = nullptr;
+};
+
+} // namespace invokeui
+
+using invokeui::GuideRow;
+
+InvokePanel::Guide InvokePanel::guideOf(const LayerInfo& layer)
+{
+    if (layer.isGroup)
+        return Guide::None;
+    const QString role = layer.invoke.value(QStringLiteral("role")).toString();
+    if (role == QLatin1String("inpaint"))
+        return Guide::Inpaint;
+    if (role == QLatin1String("region"))
+        return Guide::Region;
+    if (role == QLatin1String("control"))
+        return Guide::Control;
+    // The mask layer as 0.14 made it, before layers carried what they are.
+    if (layer.invoke.isEmpty() && layer.parent == 0 && layer.name == tr("Invoke Mask"))
+        return Guide::Inpaint;
+    return Guide::None;
+}
 
 InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* parent)
     : Panel(parent, 14), m_engine(engine), m_canvas(canvas)
@@ -231,24 +551,15 @@ InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* pa
     m_model->setToolTip(tr("The Anima model that paints the result"));
     column->addWidget(m_model);
 
-    // Canvas: what to change, and where
+    // Canvas: where to generate
     column->addWidget(heading(tr("Canvas"), body));
-    m_mode = new SegmentBar({tr("Image to image"), tr("Inpaint")}, body);
-    m_mode->setObjectName(QStringLiteral("invoke-mode"));
-    m_mode->setMinimumHeight(34);
-    m_mode->setCurrent(std::clamp(options.value(QStringLiteral("mode"), 0).toInt(), 0, 1));
-    column->addWidget(m_mode);
     auto* frameRow = new QHBoxLayout;
     frameRow->setSpacing(2);
     m_fullFrame = textButton(tr("Full canvas"), tr("Generate over the whole canvas"), "invoke-full-frame", body);
     m_selectionFrame = textButton(tr("Selection"), tr("Generate inside the bounds of the current selection"), "invoke-selection-frame", body);
-    m_paintMask = textButton(tr("Paint mask"),
-                             tr("Paint on the Invoke Mask layer. Generate hides the layer and uses the opacity of your strokes as the inpaint mask."),
-                             "invoke-paint-mask", body);
     frameRow->addWidget(m_fullFrame);
     frameRow->addWidget(m_selectionFrame);
     frameRow->addStretch();
-    frameRow->addWidget(m_paintMask);
     column->addLayout(frameRow);
     m_frameInfo = new QLabel(body);
     m_frameInfo->setObjectName(QStringLiteral("invoke-frame-info"));
@@ -256,6 +567,36 @@ InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* pa
     m_frameInfo->setStyleSheet(QStringLiteral("color: #a0a0a8;"));
     m_frameInfo->setWordWrap(true);
     column->addWidget(m_frameInfo);
+
+    // Masks and guides: layers that tell Invoke where and how
+    column->addWidget(heading(tr("Masks and guides"), body));
+    auto* addRow = new QHBoxLayout;
+    addRow->setSpacing(2);
+    m_addInpaint = textButton(tr("+ Inpaint"), tr("A mask layer: only where it is painted is generated anew"), "invoke-add-inpaint", body);
+    m_addRegion = textButton(tr("+ Region"), tr("A region layer with its own prompt, for where it is painted"), "invoke-add-region", body);
+    m_addControl = textButton(tr("+ Control"),
+                              tr("A layer of lines for a ControlNet-LLLite adapter to follow. While the layer is shown it is part of the picture too; hide it to use it only as a guide."),
+                              "invoke-add-control", body);
+    addRow->addWidget(m_addInpaint);
+    addRow->addWidget(m_addRegion);
+    addRow->addWidget(m_addControl);
+    addRow->addStretch();
+    column->addLayout(addRow);
+    m_guideList = new QWidget(body);
+    m_guideList->setObjectName(QStringLiteral("invoke-guides"));
+    auto* guides = new QVBoxLayout(m_guideList);
+    guides->setContentsMargins(0, 0, 0, 0);
+    guides->setSpacing(6);
+    column->addWidget(m_guideList);
+    m_guideHint = new QLabel(tr("Paint masks and guides with any brush, on layers of their own. Generate leaves masks and regions out of the picture it sends; hide them before exporting."), body);
+    m_guideHint->setObjectName(QStringLiteral("invoke-guide-hint"));
+    m_guideHint->setFont(theme::font(12));
+    m_guideHint->setStyleSheet(QStringLiteral("color: #a0a0a8;"));
+    m_guideHint->setWordWrap(true);
+    column->addWidget(m_guideHint);
+    m_guideTimer.setSingleShot(true);
+    m_guideTimer.setInterval(600);
+    connect(&m_guideTimer, &QTimer::timeout, this, &InvokePanel::flushGuides);
 
     // Prompt
     column->addWidget(heading(tr("Prompt"), body));
@@ -343,6 +684,10 @@ InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* pa
     parts->addWidget(m_encoder, 0, 1);
     parts->addWidget(caption(tr("VAE"), body), 1, 0);
     parts->addWidget(m_vae, 1, 1);
+    m_inpaintAdapter = combo("invoke-inpaint-adapter", body);
+    m_inpaintAdapter->setToolTip(tr("A ControlNet-LLLite inpainting adapter helps the inpainted part fit what is around it"));
+    parts->addWidget(caption(tr("Inpaint"), body), 2, 0);
+    parts->addWidget(m_inpaintAdapter, 2, 1);
     column->addLayout(parts);
     column->addStretch(1);
 
@@ -423,7 +768,9 @@ InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* pa
         refreshOverlay();
         m_canvas->setFocus();
     });
-    connect(m_paintMask, &QAbstractButton::clicked, this, &InvokePanel::paintMask);
+    connect(m_addInpaint, &QAbstractButton::clicked, this, [this] { paintGuide(addGuide(Guide::Inpaint)); });
+    connect(m_addRegion, &QAbstractButton::clicked, this, [this] { paintGuide(addGuide(Guide::Region)); });
+    connect(m_addControl, &QAbstractButton::clicked, this, [this] { paintGuide(addGuide(Guide::Control)); });
     connect(m_lastSeed, &QAbstractButton::clicked, this, [this] { m_seed->setText(QString::number(m_lastSeedValue)); });
     connect(m_generate, &QPushButton::clicked, this, &InvokePanel::generate);
     connect(m_cancel, &QPushButton::clicked, &m_client, &InvokeClient::cancel);
@@ -437,7 +784,7 @@ InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* pa
         clearResult();
         m_status->setText(tr("Result discarded."));
     });
-    connect(m_mode, &SegmentBar::currentChanged, this, &InvokePanel::refresh);
+    connect(m_inpaintAdapter, &QComboBox::activated, this, &InvokePanel::saveSettings);
     connect(m_prompt, &QPlainTextEdit::textChanged, this, &InvokePanel::refresh);
     for (QComboBox* c : {m_model, m_encoder, m_vae})
         connect(c, &QComboBox::currentIndexChanged, this, &InvokePanel::refresh);
@@ -454,6 +801,7 @@ InvokePanel::InvokePanel(CanvasEngine* engine, CanvasWidget* canvas, QWidget* pa
     connect(&m_client, &InvokeClient::imageReady, this, &InvokePanel::receive);
 
     connect(m_engine, &CanvasEngine::selectionChanged, this, &InvokePanel::refresh);
+    connect(m_engine, &CanvasEngine::layersChanged, this, &InvokePanel::refreshGuides);
     connect(m_engine, &CanvasEngine::documentChanged, this, &InvokePanel::resetCanvas);
     connect(m_engine, &CanvasEngine::canvasFlipped, this, &InvokePanel::resetFrame);
     connect(m_engine, &CanvasEngine::animationChanged, this, &InvokePanel::resetCanvas);
@@ -521,7 +869,7 @@ void InvokePanel::saveSettings() const
 {
     QSettings options;
     options.beginGroup(QStringLiteral("invoke"));
-    options.setValue(QStringLiteral("mode"), m_mode->current());
+    options.setValue(QStringLiteral("inpaintAdapter"), modelKey(m_inpaintAdapter));
     options.setValue(QStringLiteral("strength"), m_strength.value);
     options.setValue(QStringLiteral("size"), m_size.value);
     options.setValue(QStringLiteral("steps"), m_steps.value);
@@ -551,12 +899,16 @@ bool InvokePanel::eventFilter(QObject* obj, QEvent* e)
 
 void InvokePanel::loadModels(const QJsonArray& models)
 {
-    for (QComboBox* c : {m_model, m_encoder, m_vae}) {
+    for (QComboBox* c : {m_model, m_encoder, m_vae, m_inpaintAdapter}) {
         const QSignalBlocker block(c);
         c->clear();
     }
-    if (!m_client.connected())
+    m_controlModels = {};
+    if (!m_client.connected()) {
+        refreshGuides();
         return;
+    }
+    m_inpaintAdapter->addItem(tr("No adapter"), QJsonObject());
 
     QSettings options;
     options.beginGroup(QStringLiteral("invoke"));
@@ -576,6 +928,12 @@ void InvokePanel::loadModels(const QJsonArray& models)
             m_encoder->addItem(name, data);
         else if (type == QLatin1String("vae") && (base == QLatin1String("anima") || base == QLatin1String("qwen-image")))
             m_vae->addItem(name, data);
+        else if (type == QLatin1String("controlnet") && base == QLatin1String("anima")) {
+            if (name.contains(QLatin1String("inpaint"), Qt::CaseInsensitive))
+                m_inpaintAdapter->addItem(name, data);
+            else
+                m_controlModels.append(data);
+        }
     }
     auto select = [&options](QComboBox* c, const QString& field, const QString& preferred) {
         const QString key = options.value(field).toString();
@@ -592,10 +950,18 @@ void InvokePanel::loadModels(const QJsonArray& models)
     select(m_model, QStringLiteral("model"), QStringLiteral("CakePop"));
     select(m_encoder, QStringLiteral("encoder"), QStringLiteral("Anima Qwen3 0.6B Text Encoder"));
     select(m_vae, QStringLiteral("vae"), QStringLiteral("Anima QwenImage VAE"));
+    select(m_inpaintAdapter, QStringLiteral("inpaintAdapter"), tr("No adapter"));
+    refreshGuides();
     refresh();
 }
 
-bool InvokePanel::inpainting() const { return m_mode->current() == 1; }
+bool InvokePanel::hasInpaintMask() const
+{
+    for (const GuideRow* row : m_rows)
+        if (row->kind() == Guide::Inpaint && row->enabled())
+            return true;
+    return false;
+}
 
 QRect InvokePanel::frame() const
 {
@@ -626,14 +992,17 @@ void InvokePanel::refresh()
     m_fullFrame->setEnabled(supported && settingsOpen);
     m_selectionFrame->setActive(!m_frame.isEmpty());
     m_fullFrame->setActive(m_frame.isEmpty());
-    m_paintMask->setVisible(inpainting());
-    m_paintMask->setEnabled(supported && settingsOpen);
-    m_feather.row->setVisible(inpainting());
-    m_mode->setEnabled(settingsOpen);
+    for (IconButton* b : {m_addInpaint, m_addRegion, m_addControl})
+        b->setEnabled(supported && settingsOpen);
+    for (GuideRow* row : m_rows)
+        row->setEditable(supported && settingsOpen);
+    m_guideHint->setVisible(m_rows.isEmpty());
+    m_feather.row->setVisible(hasInpaintMask());
     for (Setting* s : {&m_strength, &m_steps, &m_guidance, &m_size, &m_feather})
         s->slider->setEnabled(settingsOpen);
     for (QComboBox* c : {m_model, m_encoder, m_vae, m_scheduler})
         c->setEnabled(settingsOpen);
+    m_inpaintAdapter->setEnabled(settingsOpen && m_inpaintAdapter->count() > 1);
     m_seed->setEnabled(settingsOpen);
     m_lastSeed->setEnabled(settingsOpen && m_hasLastSeed);
     m_generate->setEnabled(m_client.connected() && !m_connectionEdited && !missingModels && supported && settingsOpen &&
@@ -651,9 +1020,24 @@ void InvokePanel::refresh()
     } else {
         const QSize px = frame().size();
         const QSize render = renderSize(px);
-        m_frameInfo->setText(px.isEmpty() ? QString()
-                                          : tr("%1 × %2 on the canvas, painted at %3 × %4")
-                                                .arg(px.width()).arg(px.height()).arg(render.width()).arg(render.height()));
+        QString text = px.isEmpty() ? QString()
+                                    : tr("%1 × %2 on the canvas, painted at %3 × %4")
+                                          .arg(px.width()).arg(px.height()).arg(render.width()).arg(render.height());
+        int regions = 0, controls = 0;
+        for (const GuideRow* row : m_rows) {
+            regions += row->enabled() && row->kind() == Guide::Region;
+            controls += row->enabled() && row->kind() == Guide::Control;
+        }
+        QStringList uses;
+        if (hasInpaintMask())
+            uses << tr("inpainting the masked part");
+        if (regions)
+            uses << (regions == 1 ? tr("1 region") : tr("%1 regions").arg(regions));
+        if (controls)
+            uses << (controls == 1 ? tr("1 control") : tr("%1 controls").arg(controls));
+        if (!uses.isEmpty() && !text.isEmpty())
+            text += QStringLiteral(" · ") + uses.join(QStringLiteral(" · "));
+        m_frameInfo->setText(text);
     }
 }
 
@@ -683,34 +1067,127 @@ void InvokePanel::resetFrame()
 
 void InvokePanel::resetCanvas()
 {
-    m_maskLayer = 0;
-    m_layerBeforeMask = 0;
-    if (!m_engine->animation().enabled) {
-        for (const auto& layer : m_engine->layers()) {
-            if (!layer.isGroup && layer.parent == 0 && layer.name == tr("Invoke Mask"))
-                m_maskLayer = layer.id;
-        }
-    }
+    m_pendingGuides.clear();
+    m_guideTimer.stop();
+    refreshGuides();
     resetFrame();
 }
 
-void InvokePanel::paintMask()
+// The rows follow the tagged layers, top first, as the layer panel shows them.
+void InvokePanel::refreshGuides()
 {
-    const int active = m_engine->activeLayerId();
-    if (active != m_maskLayer)
-        m_layerBeforeMask = active;
-    if (!m_engine->layerInfo(m_maskLayer).id)
-        m_maskLayer = m_engine->addLayer(tr("Invoke Mask"), true);
-    if (!m_maskLayer) {
-        m_status->setText(tr("Could not create a mask layer."));
-        return;
+    QVector<LayerInfo> found;
+    const QVector<LayerInfo> layers = (m_engine->hasDocument() && !m_engine->animation().enabled) ? m_engine->layers() : QVector<LayerInfo>();
+    for (auto it = layers.crbegin(); it != layers.crend(); ++it)
+        if (guideOf(*it) != Guide::None)
+            found.push_back(*it);
+    // Rows are kept for layers still there, so what is being typed into one stays put.
+    QVector<GuideRow*> rows;
+    auto* list = static_cast<QVBoxLayout*>(m_guideList->layout());
+    for (const LayerInfo& layer : found) {
+        GuideRow* row = nullptr;
+        for (GuideRow* old : m_rows)
+            if (old->id() == layer.id && old->kind() == guideOf(layer))
+                row = old;
+        if (!row) {
+            row = new GuideRow(layer.id, guideOf(layer), m_guideList);
+            row->changed = [this](int id, const QJsonObject& invoke, bool now) { storeGuide(id, invoke, now); };
+            row->paint = [this](int id) { paintGuide(id); };
+            row->remove = [this](int id) {
+                m_pendingGuides.remove(id);
+                m_engine->removeLayer(id);
+                m_canvas->setFocus();
+            };
+        }
+        rows.push_back(row);
     }
-    m_engine->setActiveLayer(m_maskLayer);
-    m_engine->setLayerVisible(m_maskLayer, true);
+    for (GuideRow* old : m_rows) {
+        if (!rows.contains(old)) {
+            // It may be the row whose button is being pressed: let it finish first.
+            list->removeWidget(old);
+            old->setObjectName(QString());
+            old->hide();
+            old->deleteLater();
+        }
+    }
+    for (int i = 0; i < rows.size(); ++i) {
+        if (list->indexOf(rows[i]) != i) {
+            list->removeWidget(rows[i]);
+            list->insertWidget(i, rows[i]);
+        }
+        rows[i]->show();
+    }
+    m_rows = rows;
+    const int active = m_engine->hasDocument() ? m_engine->activeLayerId() : 0;
+    for (int i = 0; i < found.size(); ++i) {
+        LayerInfo layer = found[i];
+        if (m_pendingGuides.contains(layer.id))
+            layer.invoke = m_pendingGuides.value(layer.id);   // what is being typed wins over what the layer has yet
+        m_rows[i]->update(layer, layer.id == active, m_controlModels);
+    }
+    refresh();
+}
+
+int InvokePanel::addGuide(Guide kind)
+{
+    if (!m_engine->hasDocument() || m_engine->animation().enabled || m_engine->strokeActive() || m_engine->editActive())
+        return 0;
+    int count = 1;
+    for (const GuideRow* row : m_rows)
+        count += row->kind() == kind;
+    const QString name = kind == Guide::Inpaint ? tr("Inpaint Mask %1").arg(count)
+                         : kind == Guide::Region ? tr("Region %1").arg(count)
+                                                 : tr("Control %1").arg(count);
+    const int id = m_engine->addLayer(name, true);
+    if (!id) {
+        m_status->setText(tr("Could not create a layer."));
+        return 0;
+    }
+    QJsonObject invoke{{QStringLiteral("role"), roleKey(kind)}, {QStringLiteral("enabled"), true}};
+    if (kind == Guide::Control) {
+        invoke.insert(QStringLiteral("model"), defaultControlModel(m_controlModels));
+        invoke.insert(QStringLiteral("weight"), 1.0);
+        invoke.insert(QStringLiteral("end"), 1.0);
+    } else {
+        // Masks and regions show through, so the picture can be seen under them.
+        m_engine->setLayerOpacity(id, 0.5f);
+    }
+    m_engine->setLayerInvoke(id, invoke, tr("New %1").arg(roleName(kind)));
+    return id;
+}
+
+void InvokePanel::storeGuide(int id, const QJsonObject& invoke, bool now)
+{
+    m_pendingGuides.insert(id, invoke);
+    if (now)
+        flushGuides();
+    else
+        m_guideTimer.start();
+    refresh();
+}
+
+void InvokePanel::flushGuides()
+{
+    m_guideTimer.stop();
+    const QHash<int, QJsonObject> pending = std::exchange(m_pendingGuides, {});
+    for (auto it = pending.cbegin(); it != pending.cend(); ++it)
+        m_engine->setLayerInvoke(it.key(), it.value());
+}
+
+void InvokePanel::paintGuide(int id)
+{
+    if (!id || !m_engine->layerInfo(id).id)
+        return;
+    m_engine->setActiveLayer(id);
+    if (!m_engine->layerInfo(id).visible)
+        m_engine->setLayerVisible(id, true);
     m_engine->setMaskEditing(false);
     emit paintMaskRequested();
     m_canvas->setFocus();
-    m_status->setText(tr("Paint the area to regenerate on the Invoke Mask layer."));
+    const Guide kind = guideOf(m_engine->layerInfo(id));
+    m_status->setText(kind == Guide::Inpaint  ? tr("Paint where the picture is to be generated anew.")
+                      : kind == Guide::Region ? tr("Paint where this region's prompt applies.")
+                                              : tr("Draw the lines for Invoke to follow."));
 }
 
 // Ctrl+Enter in a prompt: generate if it can, and say why not if it cannot.
@@ -743,23 +1220,91 @@ void InvokePanel::generate()
         m_status->setText(tr("Choose a frame at least 16 × 16 pixels and at most 32 megapixels."));
         return;
     }
+    flushGuides();
     QImage coverage;
     QImage mask;
     const QSize size = renderSize(bounds.size());
-    if (inpainting()) {
-        coverage = alphaMask(m_engine->rasterLayerImage(m_maskLayer, bounds));
-        if (coverage.isNull()) {
-            m_status->setText(tr("Paint a mask inside the generation frame."));
-            return;
+    InvokeClient::Generation generation;
+    QVector<int> leftOut;      // masks and regions are not part of the picture sent
+    QStringList skipped;
+    bool anyInpaint = false;
+    for (const GuideRow* row : m_rows) {
+        const LayerInfo layer = m_engine->layerInfo(row->id());
+        if (!layer.id)
+            continue;
+        if (row->kind() != Guide::Control)
+            leftOut.push_back(layer.id);
+        if (!row->enabled())
+            continue;
+        const QImage painted = m_engine->rasterLayerImage(layer.id, bounds);
+        if (row->kind() == Guide::Inpaint) {
+            anyInpaint = true;
+            const QImage part = alphaMask(painted);
+            if (part.isNull())
+                continue;
+            if (coverage.isNull()) {
+                coverage = part;
+            } else {
+                // Several masks: whatever any of them covers.
+                for (int y = 0; y < coverage.height(); ++y) {
+                    uchar* to = coverage.scanLine(y);
+                    const uchar* from = part.constScanLine(y);
+                    for (int x = 0; x < coverage.width(); ++x)
+                        to[x] = std::max(to[x], from[x]);
+                }
+            }
+        } else if (row->kind() == Guide::Region) {
+            const QString prompt = row->data().value(QStringLiteral("prompt")).toString().trimmed();
+            const QString negative = row->data().value(QStringLiteral("negative")).toString().trimmed();
+            const QImage part = alphaMask(painted);
+            if (part.isNull() || (prompt.isEmpty() && (negative.isEmpty() || m_guidance.value <= 1.0))) {
+                skipped << layer.name;
+                continue;
+            }
+            // White, as opaque as the paint: Invoke reads the alpha.
+            const QImage scaled = part.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            QImage regionMask(size, QImage::Format_ARGB32);
+            for (int y = 0; y < size.height(); ++y) {
+                auto* to = reinterpret_cast<QRgb*>(regionMask.scanLine(y));
+                const uchar* from = scaled.constScanLine(y);
+                for (int x = 0; x < size.width(); ++x)
+                    to[x] = qRgba(255, 255, 255, from[x]);
+            }
+            generation.regions.push_back({prompt, negative, regionMask});
+        } else if (row->kind() == Guide::Control) {
+            QString key = row->data().value(QStringLiteral("model")).toString();
+            if (key.isEmpty())
+                key = defaultControlModel(m_controlModels);
+            QJsonObject model;
+            for (const QJsonValue& v : m_controlModels)
+                if (v.toObject().value(QStringLiteral("key")).toString() == key)
+                    model = v.toObject();
+            const QImage lines = controlLines(painted);
+            if (model.isEmpty() || lines.isNull()) {
+                skipped << layer.name;
+                continue;
+            }
+            InvokeClient::Generation::Control control;
+            control.model = model;
+            control.image = lines.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            control.weight = row->data().value(QStringLiteral("weight")).toDouble(1.0);
+            control.end = row->data().value(QStringLiteral("end")).toDouble(1.0);
+            generation.controls.push_back(control);
         }
+    }
+    if (anyInpaint && coverage.isNull()) {
+        m_status->setText(tr("Paint the inpaint mask inside the generation frame, or turn the mask off."));
+        return;
+    }
+    if (!coverage.isNull()) {
         // The Anima denoise node interprets black as regenerate.
         mask = coverage.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         mask.invertPixels();
         // The result is laid in through a softened copy of the painted mask.
         coverage = feathered(coverage, int(m_feather.value));
+        generation.inpaintAdapter = m_inpaintAdapter->currentData().toJsonObject();
     }
 
-    InvokeClient::Generation generation;
     generation.model = m_model->currentData().toJsonObject();
     generation.encoder = m_encoder->currentData().toJsonObject();
     generation.vae = m_vae->currentData().toJsonObject();
@@ -777,23 +1322,7 @@ void InvokePanel::generate()
     }
     generation.seed = seedValid ? quint32(seed) : QRandomGenerator::global()->generate();
 
-    if (m_engine->layerInfo(m_maskLayer).id) {
-        m_engine->setLayerVisible(m_maskLayer, false);
-        if (m_engine->activeLayerId() == m_maskLayer) {
-            int restore = m_engine->layerInfo(m_layerBeforeMask).id;
-            if (!restore) {
-                const auto layers = m_engine->layers();
-                for (auto it = layers.crbegin(); it != layers.crend(); ++it) {
-                    if (it->id != m_maskLayer && !it->isGroup && it->visible) {
-                        restore = it->id;
-                        break;
-                    }
-                }
-            }
-            m_engine->setActiveLayer(restore);
-        }
-    }
-    const QImage canvas = m_engine->renderImage(bounds);
+    const QImage canvas = m_engine->renderImageWithout(bounds, leftOut);
     if (canvas.isNull()) {
         m_status->setText(tr("Could not read the canvas."));
         return;
@@ -815,6 +1344,8 @@ void InvokePanel::generate()
     options.setValue(QStringLiteral("encoder"), modelKey(m_encoder));
     options.setValue(QStringLiteral("vae"), modelKey(m_vae));
     m_client.generate(generation, source, mask);
+    if (!skipped.isEmpty())
+        m_status->setText(m_status->text() + QStringLiteral(" · ") + tr("left out, with nothing painted in the frame or nothing to say: %1").arg(skipped.join(QStringLiteral(", "))));
     m_canvas->setFocus();
 }
 

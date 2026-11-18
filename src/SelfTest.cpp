@@ -15,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "io/Zip.h"
+#include "invoke/InvokeClient.h"
 #include "shape/Perspective.h"
 #include "shape/QuickShape.h"
 #include "model/Figures.h"
@@ -24,6 +25,7 @@
 #include "ui/ColorPanel.h"
 #include "ui/ColorPickers.h"
 #include "ui/PaletteGrid.h"
+#include "ui/PaletteMaker.h"
 #include "ui/Gallery.h"
 #include "ui/InvokePanel.h"
 #include "ui/LayerPanel.h"
@@ -5867,19 +5869,209 @@ static bool runInvokeUi(MainWindow& window, CanvasEngine& engine, const std::fun
         settle();
     }
 
-    // Inpaint brings its own controls.
-    auto* mode = panel->findChild<SegmentBar*>(QStringLiteral("invoke-mode"));
+    // Masks and guides: layers tagged with what they tell Invoke.
     auto* feather = panel->findChild<Slider*>(QStringLiteral("invoke-feather"));
-    auto* paintMask = panel->findChild<IconButton*>(QStringLiteral("invoke-paint-mask"));
-    if (mode && feather && paintMask) {
-        mode->setCurrent(0);
-        emit mode->currentChanged(0);
+    auto* addInpaint = panel->findChild<IconButton*>(QStringLiteral("invoke-add-inpaint"));
+    auto* addRegion = panel->findChild<IconButton*>(QStringLiteral("invoke-add-region"));
+    auto* addControl = panel->findChild<IconButton*>(QStringLiteral("invoke-add-control"));
+    auto* guideList = panel->findChild<QWidget*>(QStringLiteral("invoke-guides"));
+    auto* frameInfo = panel->findChild<QLabel*>(QStringLiteral("invoke-frame-info"));
+    auto rowFor = [&](int id) { return panel->findChild<QWidget*>(QStringLiteral("invoke-guide-%1").arg(id)); };
+    auto wait = [&](int ms) {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < ms)
+            QApplication::processEvents(QEventLoop::AllEvents, 10);
+    };
+    if (feather && addInpaint && addRegion && addControl && guideList && frameInfo && scroll) {
+        const BrushPreset& round = *BrushLibrary::instance().find(QStringLiteral("round-brush"));
+        check(QStringLiteral("no masks yet: no feather, no rows"), !feather->isVisible() && guideList->findChildren<QWidget*>(QRegularExpression(QStringLiteral("^invoke-guide-\\d+$"))).isEmpty());
+        scroll->ensureWidgetVisible(addInpaint);
         settle();
-        check(QStringLiteral("image to image hides the mask controls"), !feather->isVisible() && !paintMask->isVisible());
-        penTap(mode, mode->segmentRect(1).center());
-        check(QStringLiteral("the pen on Inpaint shows Paint mask and Mask feather"), mode->current() == 1 && feather->isVisible() && paintMask->isVisible());
+        const int layersBefore = int(engine.layers().size());
+        penTap(addInpaint, QPointF(addInpaint->width() / 2.0, addInpaint->height() / 2.0));
+        const int mask = engine.activeLayerId();
+        const LayerInfo maskInfo = engine.layerInfo(mask);
+        check(QStringLiteral("+ Inpaint makes a mask layer on top, half see-through, to paint: %1").arg(maskInfo.name),
+              int(engine.layers().size()) == layersBefore + 1 && InvokePanel::guideOf(maskInfo) == InvokePanel::Guide::Inpaint
+                  && engine.layers().back().id == mask && std::abs(maskInfo.opacity - 0.5f) < 0.01f && rowFor(mask) && rowFor(mask)->isVisible()
+                  && feather->isVisible());
+        // Paint the mask: a stroke across the middle, in red.
+        wave(engine, StrokeTool::Brush, round, 160, 1.0f, QColor(230, 30, 30), QPointF(500, 600), QPointF(1100, 600), 0);
+        settle();
+        const QImage withMask = engine.renderImage(QRect(780, 590, 40, 20));
+        const QImage withoutMask = engine.renderImageWithout(QRect(780, 590, 40, 20), {mask});
+        const QColor shown = withMask.pixelColor(20, 10), sent = withoutMask.pixelColor(20, 10);
+        check(QStringLiteral("the canvas shows the mask (%1); the picture for Invoke leaves it out (%2), and it stays visible").arg(shown.name(), sent.name()),
+              shown.red() > shown.green() + 60 && sent == QColor(Qt::white) && engine.layerInfo(mask).visible);
+        check(QStringLiteral("the frame line says it will inpaint (%1)").arg(frameInfo->text()), frameInfo->text().contains(QStringLiteral("inpainting")));
+
+        // A region with its own prompt, typed into its row.
+        penTap(addRegion, QPointF(addRegion->width() / 2.0, addRegion->height() / 2.0));
+        const int region = engine.activeLayerId();
+        QWidget* regionRow = rowFor(region);
+        auto* regionPrompt = regionRow ? regionRow->findChild<QPlainTextEdit*>(QStringLiteral("invoke-guide-prompt")) : nullptr;
+        auto* regionNegative = regionRow ? regionRow->findChild<QLineEdit*>(QStringLiteral("invoke-guide-negative")) : nullptr;
+        if (regionPrompt && regionNegative) {
+            regionPrompt->setPlainText(QStringLiteral("a blue lantern"));
+            regionNegative->setText(QStringLiteral("smoke"));
+            emit regionNegative->textEdited(regionNegative->text());
+            const bool notYet = engine.layerInfo(region).invoke.value(QStringLiteral("prompt")).toString().isEmpty();
+            wait(800);
+            const QJsonObject stored = engine.layerInfo(region).invoke;
+            check(QStringLiteral("+ Region: its prompt is kept on the layer a moment after typing (%1 / %2)")
+                      .arg(stored.value(QStringLiteral("prompt")).toString(), stored.value(QStringLiteral("negative")).toString()),
+                  InvokePanel::guideOf(engine.layerInfo(region)) == InvokePanel::Guide::Region && notYet
+                      && stored.value(QStringLiteral("prompt")).toString() == QLatin1String("a blue lantern")
+                      && stored.value(QStringLiteral("negative")).toString() == QLatin1String("smoke"));
+        } else {
+            check(QStringLiteral("the region row has a prompt and a negative prompt"), false);
+        }
+        wave(engine, StrokeTool::Brush, round, 200, 1.0f, QColor(40, 90, 230), QPointF(300, 300), QPointF(500, 300), 0);
+
+        // A control layer: lines to follow, which stay part of the picture while shown.
+        penTap(addControl, QPointF(addControl->width() / 2.0, addControl->height() / 2.0));
+        const int control = engine.activeLayerId();
+        const LayerInfo controlInfo = engine.layerInfo(control);
+        check(QStringLiteral("+ Control makes a control layer at full opacity (%1)").arg(controlInfo.name),
+              InvokePanel::guideOf(controlInfo) == InvokePanel::Guide::Control && controlInfo.opacity == 1.0f && rowFor(control));
+        settle();
+        scroll->ensureWidgetVisible(rowFor(control));
+        settle();
+        capture(QStringLiteral("invoke-guides"));
+
+        // The eye leaves a guide out without hiding its layer.
+        auto* eye = rowFor(mask) ? rowFor(mask)->findChild<IconButton*>(QStringLiteral("invoke-guide-use")) : nullptr;
+        if (eye) {
+            scroll->ensureWidgetVisible(eye);
+            settle();
+            penTap(eye, QPointF(eye->width() / 2.0, eye->height() / 2.0));
+            const bool off = !engine.layerInfo(mask).invoke.value(QStringLiteral("enabled")).toBool(true) && engine.layerInfo(mask).visible
+                             && !feather->isVisible() && !frameInfo->text().contains(QStringLiteral("inpainting"));
+            penTap(eye, QPointF(eye->width() / 2.0, eye->height() / 2.0));
+            check(QStringLiteral("the eye turns the mask off for Invoke (the layer stays shown) and on again"),
+                  off && engine.layerInfo(mask).invoke.value(QStringLiteral("enabled")).toBool(false) && feather->isVisible());
+        } else {
+            check(QStringLiteral("a guide row has an eye"), false);
+        }
+
+        // Paint goes back to a guide; delete removes it, and undo brings it back.
+        auto* paintRegion = regionRow ? regionRow->findChild<IconButton*>(QStringLiteral("invoke-guide-paint")) : nullptr;
+        if (paintRegion) {
+            scroll->ensureWidgetVisible(paintRegion);
+            settle();
+            penTap(paintRegion, QPointF(paintRegion->width() / 2.0, paintRegion->height() / 2.0));
+        }
+        check(QStringLiteral("Paint on a row makes its layer the one painted on"), paintRegion && engine.activeLayerId() == region);
+        auto* removeControl = rowFor(control) ? rowFor(control)->findChild<IconButton*>(QStringLiteral("invoke-guide-remove")) : nullptr;
+        if (removeControl) {
+            scroll->ensureWidgetVisible(removeControl);
+            settle();
+            penTap(removeControl, QPointF(removeControl->width() / 2.0, removeControl->height() / 2.0));
+        }
+        settle();
+        const bool removed = removeControl && !engine.layerInfo(control).id && !rowFor(control);
+        engine.history().undo();
+        settle();
+        check(QStringLiteral("delete removes the control layer and its row; undo brings both back"),
+              removed && engine.layerInfo(control).id == control && rowFor(control));
+
+        // Kept with the document.
+        QTemporaryDir docDir;
+        const QString docPath = docDir.filePath(QStringLiteral("guides.impasto"));
+        QString docError;
+        const bool saved = docio::save(engine, docPath, &docError);
+        CanvasEngine reread;
+        reread.initialize();
+        const bool loaded = saved && docio::load(reread, docPath, &docError);
+        int roles = 0;
+        QString regionPromptBack;
+        for (const LayerInfo& l : reread.layers()) {
+            roles += InvokePanel::guideOf(l) != InvokePanel::Guide::None;
+            if (InvokePanel::guideOf(l) == InvokePanel::Guide::Region)
+                regionPromptBack = l.invoke.value(QStringLiteral("prompt")).toString();
+        }
+        check(QStringLiteral("saved and opened again: %1 guide layers, the region still says \"%2\" %3").arg(roles).arg(regionPromptBack, docError),
+              loaded && roles == 3 && regionPromptBack == QLatin1String("a blue lantern"));
+        // An Invoke Mask from 0.14 is an inpaint mask.
+        LayerInfo old;
+        old.name = QStringLiteral("Invoke Mask");
+        check(QStringLiteral("an untagged \"Invoke Mask\" layer from 0.14 counts as an inpaint mask"), InvokePanel::guideOf(old) == InvokePanel::Guide::Inpaint);
     } else {
-        check(QStringLiteral("mode, feather and paint mask exist"), false);
+        check(QStringLiteral("feather, the add buttons and the guide list exist"), false);
+    }
+
+    // The graph for regions, a control and the inpainting adapter, as Invoke's own canvas builds it.
+    {
+        InvokeClient::Generation g;
+        g.model = QJsonObject{{"key", "m"}, {"hash", "h"}, {"name", "Model"}, {"base", "anima"}, {"type", "main"}};
+        g.encoder = QJsonObject{{"key", "e"}, {"hash", "h"}, {"name", "Encoder"}, {"base", "any"}, {"type", "qwen3_encoder"}};
+        g.vae = QJsonObject{{"key", "v"}, {"hash", "h"}, {"name", "VAE"}, {"base", "anima"}, {"type", "vae"}};
+        g.prompt = QStringLiteral("a street at night");
+        g.negative = QStringLiteral("blurry");
+        g.scheduler = QStringLiteral("euler");
+        g.guidance = 4.5;
+        g.regions.push_back({QStringLiteral("a blue lantern"), QStringLiteral("smoke"), QImage()});
+        g.regions.push_back({QStringLiteral("a cat"), QString(), QImage()});
+        InvokeClient::Generation::Control c;
+        c.model = QJsonObject{{"key", "s"}, {"hash", "h"}, {"name", "Anima LLLite Sketch"}, {"base", "anima"}, {"type", "controlnet"}};
+        c.weight = 0.8;
+        c.end = 0.7;
+        g.controls.push_back(c);
+        g.inpaintAdapter = QJsonObject{{"key", "i"}, {"hash", "h"}, {"name", "Anima LLLite Inpainting"}, {"base", "anima"}, {"type", "controlnet"}};
+        InvokeClient::Names names;
+        names.source = QStringLiteral("source.png");
+        names.mask = QStringLiteral("mask.png");
+        names.adapterMask = QStringLiteral("area.png");
+        names.regions = {QStringLiteral("r0.png"), QStringLiteral("r1.png")};
+        names.controls = {QStringLiteral("c0.png")};
+        const QJsonObject batch = InvokeClient::batchFor(g, QSize(1024, 768), names, QStringLiteral("test"));
+        const QJsonObject graph = batch.value(QStringLiteral("batch")).toObject().value(QStringLiteral("graph")).toObject();
+        const QJsonObject nodes = graph.value(QStringLiteral("nodes")).toObject();
+        const QJsonArray edges = graph.value(QStringLiteral("edges")).toArray();
+        auto has = [&](const QString& from, const QString& out, const QString& to, const QString& in) {
+            for (const QJsonValue& e : edges) {
+                const QJsonObject o = e.toObject();
+                if (o[QStringLiteral("source")].toObject()[QStringLiteral("node_id")] == from && o[QStringLiteral("source")].toObject()[QStringLiteral("field")] == out
+                    && o[QStringLiteral("destination")].toObject()[QStringLiteral("node_id")] == to && o[QStringLiteral("destination")].toObject()[QStringLiteral("field")] == in)
+                    return true;
+            }
+            return false;
+        };
+        auto type = [&](const QString& id) { return nodes.value(id).toObject().value(QStringLiteral("type")).toString(); };
+        const bool regions = type(QStringLiteral("region_mask_0")) == QLatin1String("alpha_mask_to_tensor")
+                             && nodes.value(QStringLiteral("region_mask_1")).toObject().value(QStringLiteral("image")).toObject().value(QStringLiteral("image_name")) == QLatin1String("r1.png")
+                             && has(QStringLiteral("region_mask_0"), QStringLiteral("mask"), QStringLiteral("region_positive_0"), QStringLiteral("mask"))
+                             && has(QStringLiteral("region_positive_0"), QStringLiteral("conditioning"), QStringLiteral("positive_collection"), QStringLiteral("item"))
+                             && has(QStringLiteral("region_negative_0"), QStringLiteral("conditioning"), QStringLiteral("negative_collection"), QStringLiteral("item"))
+                             && has(QStringLiteral("region_positive_1"), QStringLiteral("conditioning"), QStringLiteral("positive_collection"), QStringLiteral("item"))
+                             && !nodes.contains(QStringLiteral("region_negative_1"))
+                             && has(QStringLiteral("model"), QStringLiteral("qwen3_encoder"), QStringLiteral("region_positive_1"), QStringLiteral("qwen3_encoder"));
+        const QJsonObject control = nodes.value(QStringLiteral("control_0")).toObject();
+        const QJsonObject adapter = nodes.value(QStringLiteral("inpaint_adapter")).toObject();
+        const bool lllite = type(QStringLiteral("control_0")) == QLatin1String("anima_lllite") && control.value(QStringLiteral("weight")).toDouble() == 0.8
+                            && control.value(QStringLiteral("end_step_percent")).toDouble() == 0.7
+                            && control.value(QStringLiteral("image")).toObject().value(QStringLiteral("image_name")) == QLatin1String("c0.png")
+                            && adapter.value(QStringLiteral("mask")).toObject().value(QStringLiteral("image_name")) == QLatin1String("area.png")
+                            && adapter.value(QStringLiteral("image")).toObject().value(QStringLiteral("image_name")) == QLatin1String("source.png")
+                            && has(QStringLiteral("control_0"), QStringLiteral("control"), QStringLiteral("lllite_collection"), QStringLiteral("item"))
+                            && has(QStringLiteral("inpaint_adapter"), QStringLiteral("control"), QStringLiteral("lllite_collection"), QStringLiteral("item"))
+                            && has(QStringLiteral("lllite_collection"), QStringLiteral("collection"), QStringLiteral("denoise"), QStringLiteral("control_lllite"));
+        check(QStringLiteral("the graph: each region's mask feeds its own prompts, which join the collections; the control and the inpainting adapter feed control_lllite"),
+              regions && lllite);
+        // At CFG 1 there is no negative side, so no regional negative either.
+        g.guidance = 1.0;
+        const QJsonObject plain = InvokeClient::batchFor(g, QSize(1024, 768), names, QStringLiteral("test"))
+                                      .value(QStringLiteral("batch")).toObject().value(QStringLiteral("graph")).toObject().value(QStringLiteral("nodes")).toObject();
+        check(QStringLiteral("at CFG 1 no negative prompts are sent, regional or not"),
+              !plain.contains(QStringLiteral("negative")) && !plain.contains(QStringLiteral("region_negative_0")) && plain.contains(QStringLiteral("region_positive_0")));
+        const QString dump = qEnvironmentVariable("IMPASTO_INVOKE_BATCH");
+        if (!dump.isEmpty()) {
+            g.guidance = 4.5;
+            QFile out(dump);
+            if (out.open(QIODevice::WriteOnly))
+                out.write(QJsonDocument(InvokeClient::batchFor(g, QSize(1024, 768), names, QStringLiteral("test"))).toJson());
+        }
     }
     capture(QStringLiteral("invoke"));
     if (scroll) {
@@ -5936,6 +6128,11 @@ static bool runInvokeUi(MainWindow& window, CanvasEngine& engine, const std::fun
         check(QStringLiteral("connected to the live Invoke: %1 Anima models, %2 chosen").arg(model->count()).arg(model->currentText()),
               model->count() > 0);
         check(QStringLiteral("Generate is ready with a prompt (%1)").arg(status->text()), generate->isEnabled());
+        auto* adapterBox = panel->findChild<QComboBox*>(QStringLiteral("invoke-inpaint-adapter"));
+        auto* controlModel = panel->findChild<QComboBox*>(QStringLiteral("invoke-guide-model"));
+        check(QStringLiteral("the server's adapters are offered: inpaint %1, control %2")
+                  .arg(adapterBox ? QString::number(adapterBox->count() - 1) : QStringLiteral("?"), controlModel ? controlModel->currentText() : QStringLiteral("none")),
+              adapterBox && controlModel && controlModel->count() > 0);
         capture(QStringLiteral("invoke-connected"));
     }
 
@@ -5947,6 +6144,181 @@ static bool runInvokeUi(MainWindow& window, CanvasEngine& engine, const std::fun
     window.showForScreenshot(QStringLiteral("main"));
     settle();
     check(QStringLiteral("other screenshots leave it closed"), !panel->isVisible() && !button->isActive());
+
+    qInfo().noquote() << log.join(QLatin1Char('\n'));
+    return ok;
+}
+
+// Palette from a Picture: the colours of a picture, how many, which to keep,
+// saved with the palettes and written to a file. Driven with the pen at the window.
+static bool runPaletteMakerUi(MainWindow& window, CanvasEngine& engine, const std::function<void(QWidget*, const QPointF&)>& penTap,
+                              const std::function<void(QEvent::Type, const QPointF&, qreal, Qt::MouseButton, Qt::MouseButtons)>& penWindow,
+                              const std::function<void(const QString&)>& capture, const std::function<void()>& settle)
+{
+    QStringList log;
+    bool ok = true;
+    auto check = [&](const QString& what, bool passed) {
+        ok = ok && passed;
+        log << QStringLiteral("%1 %2").arg(passed ? "ok    " : "FAILED", what);
+    };
+    auto drag = [&](QWidget* w, const QPointF& from, const QPointF& by) {
+        const QPointF a = w->mapTo(&window, from.toPoint());
+        penWindow(QEvent::TabletMove, a, 0.0, Qt::NoButton, Qt::NoButton);
+        penWindow(QEvent::TabletPress, a, 0.5, Qt::LeftButton, Qt::LeftButton);
+        for (int i = 1; i <= 16; ++i)
+            penWindow(QEvent::TabletMove, a + by * (i / 16.0), 0.6, Qt::NoButton, Qt::LeftButton);
+        penWindow(QEvent::TabletRelease, a + by, 0.0, Qt::LeftButton, Qt::NoButton);
+        settle();
+    };
+    auto centre = [](QWidget* w) { return QPointF(w->width() / 2.0, w->height() / 2.0); };
+    auto near = [](const QColor& a, const QColor& b) {
+        return std::abs(a.red() - b.red()) <= 3 && std::abs(a.green() - b.green()) <= 3 && std::abs(a.blue() - b.blue()) <= 3;
+    };
+
+    // Something on the canvas to take colours from.
+    engine.newDocument(QSize(1600, 1000), Qt::white);
+    const BrushLibrary& brushes = BrushLibrary::instance();
+    const BrushPreset& round = *brushes.find(QStringLiteral("round-brush"));
+    wave(engine, StrokeTool::Brush, round, 260, 1.0f, QColor(200, 40, 50), QPointF(200, 300), QPointF(1400, 300), 60);
+    wave(engine, StrokeTool::Brush, round, 260, 1.0f, QColor(40, 120, 210), QPointF(200, 700), QPointF(1400, 700), 60);
+    window.showForScreenshot(QStringLiteral("main"));
+    settle();
+
+    window.showPaletteMaker();
+    settle();
+    PaletteMaker* maker = window.paletteMaker();
+    QWidget* host = window.centralWidget();
+    check(QStringLiteral("Palette from a Picture fills the window"), maker && maker->isVisible() && maker->geometry() == host->rect());
+    if (!maker) {
+        qInfo().noquote() << log.join(QLatin1Char('\n'));
+        return false;
+    }
+    auto* count = maker->findChild<ValueField*>(QStringLiteral("palette-maker-count"));
+    auto* source = maker->findChild<SegmentBar*>(QStringLiteral("palette-maker-source"));
+    auto* save = maker->findChild<QPushButton*>(QStringLiteral("palette-maker-save"));
+    auto* exportBtn = maker->findChild<QPushButton*>(QStringLiteral("palette-maker-export"));
+    auto* nameEdit = maker->findChild<QLineEdit*>(QStringLiteral("palette-maker-name"));
+    auto* summary = maker->findChild<QLabel*>(QStringLiteral("palette-maker-summary"));
+    if (!count || !source || !save || !exportBtn || !nameEdit || !summary) {
+        check(QStringLiteral("the maker's controls exist"), false);
+        qInfo().noquote() << log.join(QLatin1Char('\n'));
+        return false;
+    }
+    const QVector<QColor> fromCanvas = maker->found();
+    bool hasRed = false, hasBlue = false, hasWhite = false;
+    for (const QColor& c : fromCanvas) {
+        hasRed |= c.red() > 150 && c.green() < 90 && c.blue() < 100;
+        hasBlue |= c.blue() > 150 && c.red() < 90;
+        hasWhite |= c.lightness() > 245;
+    }
+    check(QStringLiteral("it opens on the canvas: %1 colours, the red, the blue and the white among them; named \"%2\"").arg(fromCanvas.size()).arg(nameEdit->text()),
+          source->current() == PaletteMaker::Canvas && !fromCanvas.isEmpty() && hasRed && hasBlue && hasWhite && nameEdit->text() == QLatin1String("From the Canvas"));
+
+    capture(QStringLiteral("palette-maker-canvas"));
+
+    // A picture of four known colours, as from a file.
+    QImage four(400, 200, QImage::Format_RGB32);
+    const QColor q[4] = {QColor(220, 30, 40), QColor(30, 160, 70), QColor(40, 60, 200), QColor(240, 210, 40)};
+    for (int y = 0; y < 200; ++y)
+        for (int x = 0; x < 400; ++x)
+            four.setPixelColor(x, y, q[(x >= 200) + 2 * (y >= 100)]);
+    QTemporaryDir dir;
+    const QString picturePath = dir.filePath(QStringLiteral("four colours.png"));
+    four.save(picturePath);
+    QString error;
+    const bool read = maker->loadFile(picturePath, &error);
+    maker->setCount(4);
+    settle();
+    const QVector<QColor> got = maker->found();
+    const QVector<QPointF> marks = maker->marks();
+    int matched = 0, placed = 0;
+    for (int k = 0; k < 4; ++k) {
+        for (int i = 0; i < got.size(); ++i) {
+            if (near(got[i], q[k])) {
+                ++matched;
+                // Its mark is in its own quarter of the picture.
+                const QPointF m = marks.value(i);
+                placed += ((m.x() >= 0.5) == bool(k & 1)) && ((m.y() >= 0.5) == bool(k & 2));
+                break;
+            }
+        }
+    }
+    check(QStringLiteral("a file of four colours at 4 gives those four back (%1 matched, %2 marked in their own quarter), named after the file (%3)")
+              .arg(matched).arg(placed).arg(nameEdit->text()),
+          read && source->current() == PaletteMaker::File && got.size() == 4 && matched == 4 && placed == 4 && nameEdit->text() == QLatin1String("four colours"));
+    capture(QStringLiteral("palette-maker"));
+
+    // More colours with the pen: drag the count to the right.
+    maker->setCount(8);
+    settle();
+    drag(count, centre(count), QPointF(140, 0));
+    const int more = maker->count();
+    drag(count, centre(count), QPointF(-900, 0));
+    const int fewest = maker->count();
+    check(QStringLiteral("drag How many right: %1 colours; far left: %2, the least").arg(more).arg(fewest), more > 8 && fewest == 2 && maker->found().size() == 2);
+    maker->setCount(4);
+    settle();
+
+    // A tap on a colour leaves it out; another takes it back.
+    const QRect first = maker->swatchRect(0);
+    penTap(maker, QPointF(first.center()));
+    const int keptAfterTap = int(maker->kept().size());
+    const QString summaryAfterTap = summary->text();
+    capture(QStringLiteral("palette-maker-left-out"));
+    penTap(maker, QPointF(first.center()));
+    check(QStringLiteral("tap a colour: it is left out (%1); tap again: back (%2)").arg(summaryAfterTap).arg(maker->kept().size()),
+          keptAfterTap == 3 && summaryAfterTap.contains(QStringLiteral("3 of 4")) && maker->kept().size() == 4);
+
+    // No reference picture: nothing to save.
+    penTap(source, source->segmentRect(PaletteMaker::Reference).center());
+    const bool noReference = maker->found().isEmpty() && !save->isEnabled() && summary->text().contains(QStringLiteral("no reference"));
+    check(QStringLiteral("Reference with none loaded: %1, Save off").arg(summary->text()), noReference);
+
+    // Save: kept with the palettes, as the one under the pickers.
+    maker->loadFile(picturePath);
+    maker->setCount(4);
+    penTap(maker, QPointF(maker->swatchRect(3).center()));   // three of the four
+    const QVector<QColor> wanted = maker->kept();
+    nameEdit->setText(QStringLiteral("Four Quarters"));
+    emit nameEdit->textEdited(nameEdit->text());
+    PaletteLibrary& lib = PaletteLibrary::instance();
+    const int before = int(lib.palettes().size());
+    penTap(save, centre(save));
+    const Palette* made = lib.find(lib.currentId());
+    check(QStringLiteral("Save: a new palette \"%1\" with the %2 colours kept, the one under the pickers; the window closes")
+              .arg(made ? made->name : QString()).arg(made ? made->filledColors().size() : 0),
+          int(lib.palettes().size()) == before + 1 && made && made->name == QLatin1String("Four Quarters") && made->filledColors() == wanted && !maker->isVisible());
+
+    // Save and export: the file reads back as the same colours, in both formats.
+    window.showPaletteMaker();
+    maker->loadFile(picturePath);
+    maker->setCount(4);
+    maker->setName(QStringLiteral("Exported"));
+    const QVector<QColor> exported = maker->kept();
+    const QString gpl = dir.filePath(QStringLiteral("exported.gpl"));
+    const QString gplId = maker->saveAndExport(gpl, &error);
+    const QString back = lib.importFile(gpl, &error);
+    const Palette* reread = lib.find(back);
+    window.showPaletteMaker();
+    maker->loadFile(picturePath);
+    maker->setCount(4);
+    const QString swatches = dir.filePath(QStringLiteral("exported.swatches"));
+    const QString swId = maker->saveAndExport(swatches, &error);
+    const QVector<QColor> swBack = PaletteLibrary::readSwatches(swatches, nullptr);
+    int swMatch = 0;
+    for (int i = 0; i < exported.size() && i < swBack.size(); ++i)
+        swMatch += near(exported[i], swBack[i]);
+    check(QStringLiteral("Save and Export writes a .gpl that reads back as the same %1 colours, and a .swatches for Procreate (%2 match) %3")
+              .arg(exported.size()).arg(swMatch).arg(error),
+          !gplId.isEmpty() && reread && reread->filledColors() == exported && !swId.isEmpty() && swMatch == exported.size());
+
+    // Escape leaves without making anything.
+    window.showPaletteMaker();
+    const int count0 = int(lib.palettes().size());
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(maker, &esc);
+    settle();
+    check(QStringLiteral("Escape closes it and makes nothing"), !maker->isVisible() && int(lib.palettes().size()) == count0);
 
     qInfo().noquote() << log.join(QLatin1Char('\n'));
     return ok;
@@ -6391,6 +6763,8 @@ int runUiShot(const QString& outPrefix)
         return runInvokeUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
     if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("canvas"))
         return runNewCanvasUi(outPrefix, settle) ? 0 : 2;
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("palette"))
+        return runPaletteMakerUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
     {
         QStringList log;
         bool penOk = true;

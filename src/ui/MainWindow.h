@@ -46,6 +46,9 @@ public:
     Gallery* gallery() const { return m_gallery; }
     ReferencePanel* referencePanel() const { return m_refPanel; }
     ModelPanel* modelPanel() const { return m_modelPanel; }
+    // A palette from the canvas, the reference or a file, over the whole window.
+    void showPaletteMaker();
+    class PaletteMaker* paletteMaker() const { return m_paletteMaker; }
     // Everything about the current brush, over the whole window, with a pad to try it on.
     void showBrushLab();
     BrushLab* brushLab() const { return m_brushLab; }
@@ -180,6 +183,7 @@ private:
     QWidget* anchorOf(Popover* popover) const;
     BrushPanel* m_brushPanel = nullptr;
     BrushLab* m_brushLab = nullptr;
+    class PaletteMaker* m_paletteMaker = nullptr;
     ColorPanel* m_colorPanel = nullptr;
     ShortcutSheet* m_shortcuts = nullptr;
     QVector<Popover*> m_suppressed;

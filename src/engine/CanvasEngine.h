@@ -11,6 +11,7 @@
 #include <QColor>
 #include <QHash>
 #include <QImage>
+#include <QJsonObject>
 #include <QObject>
 #include <QPainterPath>
 #include <QPointF>
@@ -50,6 +51,7 @@ struct Layer {
     int parent = 0;
     bool collapsed = false;  // folded shut in the layer panel
     int hold = 1;            // as a frame of an animation: how many frames' time it stays up
+    QJsonObject invoke;      // what the layer tells Invoke (an inpaint mask, a region, a control); empty for a picture layer
 
     gfx::Texture& target(bool onMask) { return onMask ? *mask : tex; }
 };
@@ -75,6 +77,7 @@ struct LayerInfo {
     bool reference = false;   // fills on other layers follow this one
     bool isText = false;      // still the text that was typed: it can be edited as text
     int hold = 1;             // as a frame of an animation: how many frames' time it stays up
+    QJsonObject invoke;       // empty, or what this layer guides when generating with Invoke
 };
 
 // An animation in the manner of Procreate's Animation Assist: every top-level
@@ -266,6 +269,8 @@ public:
     void flipLayer(int id, bool horizontal);
     void flipCanvas(bool horizontal);
     void setLayerName(int id, const QString& name);
+    // What a layer tells Invoke; one undo step, and edits in a row of the same kind merge.
+    void setLayerInvoke(int id, const QJsonObject& invoke, const QString& undoName = {});
     void setLayerVisible(int id, bool visible);
     void setLayerOpacity(int id, float opacity);
     void setLayerBlend(int id, BlendMode mode);
@@ -485,6 +490,8 @@ public:
     void finish();                         // blocks until the GPU has caught up (benchmarks)
     GLuint resultTexture() const { return m_result.id(); }
     QImage renderImage(const QRect& region = {});
+    // The same, as if these layers were hidden; nothing about them changes.
+    QImage renderImageWithout(const QRect& region, const QVector<int>& hidden);
     QByteArray compositePixels();   // the same at full precision: RGBA16F, premultiplied, the whole canvas
     QColor pickColor(const QPoint& canvasPos);
     QImage brushPreview(const BrushPreset& preset, const QSize& size, const QColor& color, float scale);

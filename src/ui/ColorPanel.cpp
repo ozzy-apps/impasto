@@ -83,11 +83,6 @@ protected:
     void leaveEvent(QEvent*) override { update(); }
 };
 
-QString pictureFilter()
-{
-    return QObject::tr("Pictures (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)");
-}
-
 } // namespace
 
 // ------------------------------------------------------------- PaletteList
@@ -618,28 +613,8 @@ void ColorPanel::showNewMenu(const QPoint& globalPos)
 {
     QMenu menu(window());
     menu.addAction(tr("New Palette"), this, &ColorPanel::newPalette);
-    menu.addAction(tr("From the Canvas"), this, [this] {
-        if (canvasImage)
-            newPaletteFrom(canvasImage(), tr("From the Canvas"));
-    });
-    QAction* fromReference = menu.addAction(tr("From the Reference Picture"), this, [this] {
-        if (referenceImage)
-            newPaletteFrom(referenceImage(), tr("From the Reference"));
-    });
-    fromReference->setEnabled(referenceImage && !referenceImage().isNull());
-    menu.addAction(tr("From a Picture File…"), this, [this] {
-        const QString path = QFileDialog::getOpenFileName(window(), tr("Colours from a Picture"),
-                                                          QStandardPaths::writableLocation(QStandardPaths::PicturesLocation), pictureFilter());
-        if (path.isEmpty())
-            return;
-        QImageReader reader(path);
-        reader.setAutoTransform(true);
-        const QImage picture = reader.read();
-        if (picture.isNull())
-            QMessageBox::warning(window(), tr("Colours from a Picture"), tr("%1 could not be read as a picture.").arg(QFileInfo(path).fileName()));
-        else
-            newPaletteFrom(picture, QFileInfo(path).completeBaseName());
-    });
+    // The canvas, the reference or a file, with how many colours and which to keep.
+    menu.addAction(tr("From a Picture…"), this, &ColorPanel::paletteMakerRequested);
     menu.addSeparator();
     menu.addAction(tr("Import Palettes…"), this, [this] {
         const QStringList paths = QFileDialog::getOpenFileNames(window(), tr("Import Palettes"),

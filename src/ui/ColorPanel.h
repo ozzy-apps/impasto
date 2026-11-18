@@ -54,8 +54,12 @@ public:
     QRect paletteHeaderRect(int index) const;
     PaletteGrid* paletteGrid(int index) const;
 
+    // Brings a palette into view as the default, as a new one is.
+    void showPalette(const QString& paletteId) { adopt(paletteId); }
+
 signals:
     void message(const QString& text);
+    void paletteMakerRequested();   // Palette from a Picture, in a window of its own
 
 private:
     class PaletteList;

@@ -602,6 +602,7 @@ void CanvasEngine::loadDocument(const QSize& size, const QColor& background, boo
         layer->clipping = d.info.clipping;
         layer->collapsed = d.info.collapsed;
         layer->hold = std::clamp(d.info.hold, 1, 99);
+        layer->invoke = d.info.invoke;
         const QRect r = d.rect & canvasRect();
         if (!layer->isGroup && !r.isEmpty() && r == d.rect) {
             layer->tex.uploadHalf(r, d.pixels);
@@ -782,6 +783,7 @@ LayerInfo CanvasEngine::infoOf(const Layer& l) const
     i.reference = l.id == m_referenceId;
     i.isText = !l.isGroup && m_texts.contains(l.stamp);
     i.hold = l.hold;
+    i.invoke = l.invoke;
     return i;
 }
 
@@ -836,6 +838,7 @@ LayerPtr CanvasEngine::cloneLayer(const Layer& src)
     copy->clipping = src.clipping;
     copy->collapsed = src.collapsed;
     copy->hold = src.hold;
+    copy->invoke = src.invoke;
     copy->maskEnabled = src.maskEnabled;
     copy->parent = src.parent;
     if (!src.isGroup)
@@ -1255,6 +1258,7 @@ void CanvasEngine::applyProps(Layer& l, const LayerInfo& p)
     l.alphaLock = p.alphaLock;
     l.clipping = p.clipping;
     l.hold = p.hold;
+    l.invoke = p.invoke;
     damageAll();
     emit layersChanged();
 }
@@ -1277,6 +1281,15 @@ void CanvasEngine::changeProps(int id, const std::function<void(LayerInfo&)>& ed
 void CanvasEngine::setLayerName(int id, const QString& name)
 {
     changeProps(id, [&](LayerInfo& i) { i.name = name; }, tr("Rename Layer"), {});
+}
+
+void CanvasEngine::setLayerInvoke(int id, const QJsonObject& invoke, const QString& undoName)
+{
+    const LayerPtr layer = find(id);
+    if (!layer || layer->invoke == invoke)
+        return;
+    changeProps(id, [&](LayerInfo& i) { i.invoke = invoke; }, undoName.isEmpty() ? tr("Invoke Guide") : undoName,
+                QStringLiteral("invoke"));
 }
 
 void CanvasEngine::setLayerVisible(int id, bool visible)
@@ -4238,6 +4251,25 @@ QImage CanvasEngine::renderImage(const QRect& region)
     Scope s(this);
     prepareFrame(false);
     return m_result.readback(bounds);
+}
+
+QImage CanvasEngine::renderImageWithout(const QRect& region, const QVector<int>& hidden)
+{
+    std::vector<std::pair<LayerPtr, bool>> was;
+    for (int id : hidden) {
+        if (LayerPtr l = find(id); l && l->visible) {
+            was.emplace_back(l, true);
+            l->visible = false;
+        }
+    }
+    if (was.empty())
+        return renderImage(region);
+    damageAll();
+    QImage image = renderImage(region);
+    for (auto& [layer, visible] : was)
+        layer->visible = visible;
+    damageAll();
+    return image;
 }
 
 QByteArray CanvasEngine::compositePixels()

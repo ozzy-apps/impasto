@@ -12,6 +12,7 @@
 #include "ui/InvokePanel.h"
 #include "ui/LayerPanel.h"
 #include "ui/NewCanvasDialog.h"
+#include "ui/PaletteMaker.h"
 #include "ui/ReferencePanel.h"
 #include "ui/StabilisePanel.h"
 #include "ui/Timeline.h"
@@ -644,6 +645,7 @@ void MainWindow::buildPopovers()
     m_colorPanel->canvasImage = [this] { return m_engine->renderImage(); };
     m_colorPanel->referenceImage = [this] { return m_refPanel->image(); };
     connect(m_colorPanel, &ColorPanel::message, this, [this](const QString& text) { m_toast->showMessage(text); });
+    connect(m_colorPanel, &ColorPanel::paletteMakerRequested, this, &MainWindow::showPaletteMaker);
     for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
         p->setTopInset(kTopBarHeight);
         connect(p, &Popover::dismissed, this, [this] { m_canvas->setFocus(); });
@@ -778,6 +780,12 @@ void MainWindow::buildShortcuts()
             // The brush lab covers everything: only the keys that leave it, or the app, still act.
             if (m_brushLab && m_brushLab->isVisible() && keys != QKeySequence(Qt::Key_Escape) && keys != QKeySequence(Qt::CTRL | Qt::Key_Q))
                 return;
+            if (m_paletteMaker && m_paletteMaker->isVisible()) {
+                if (keys == QKeySequence(Qt::Key_Escape))
+                    m_paletteMaker->cancel();
+                if (keys != QKeySequence(Qt::CTRL | Qt::Key_Q))
+                    return;
+            }
             if (m_gallery && m_gallery->isVisible() && !allowInGallery)
                 return;
             // While text is being typed, only the keys that end it mean anything else.
@@ -938,6 +946,8 @@ void MainWindow::showForScreenshot(const QString& what)
         finishAdjustment(false);
     if (m_brushLab && m_brushLab->isVisible())
         m_brushLab->done();
+    if (m_paletteMaker && m_paletteMaker->isVisible())
+        m_paletteMaker->cancel();
     closePopovers();
     hideGallery();
     setInvokeOpen(what == QLatin1String("invoke"));
@@ -1068,6 +1078,8 @@ void MainWindow::layoutOverlays()
         m_gallery->setGeometry(0, 0, s.width(), s.height());
     if (m_brushLab)
         m_brushLab->setGeometry(0, 0, s.width(), s.height());
+    if (m_paletteMaker)
+        m_paletteMaker->setGeometry(0, 0, s.width(), s.height());
 }
 
 void MainWindow::showBrushLab()
@@ -1091,6 +1103,30 @@ void MainWindow::showBrushLab()
     m_brushLab->setGeometry(m_host->rect());
     m_brushLab->setCanvasPaper(m_engine->backgroundColor());
     m_brushLab->open(m_canvas->pressureCurve());
+}
+
+void MainWindow::showPaletteMaker()
+{
+    if (editing() || (m_gallery && m_gallery->isVisible()) || (m_brushLab && m_brushLab->isVisible()))
+        return;
+    if (!m_paletteMaker) {
+        m_paletteMaker = new PaletteMaker(m_host);
+        m_paletteMaker->canvasImage = [this] { return m_engine->renderImage(); };
+        m_paletteMaker->referenceImage = [this] { return m_refPanel->image(); };
+        connect(m_paletteMaker, &PaletteMaker::message, this, [this](const QString& text) { m_toast->showMessage(text); });
+        connect(m_paletteMaker, &PaletteMaker::saved, m_colorPanel, &ColorPanel::showPalette);
+        connect(m_paletteMaker, &PaletteMaker::closed, this, [this] {
+            setPanelsSuppressed(false);
+            m_canvas->setFocus();
+        });
+    }
+    for (Popover* p : {m_brushPop, m_layerPop, m_colorPop, m_refPop, m_steadyPop, m_modelPop}) {
+        if (!p->isPinned())
+            p->hidePanel();
+    }
+    setPanelsSuppressed(true);   // pinned panels step aside and come back afterwards
+    m_paletteMaker->setGeometry(m_host->rect());
+    m_paletteMaker->open(PaletteMaker::Canvas);
 }
 
 // ---------------------------------------------------------------- recovery

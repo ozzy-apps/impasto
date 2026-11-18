@@ -196,6 +196,8 @@ bool save(CanvasEngine& engine, const QString& path, QString* error)
         o[QStringLiteral("maskEnabled")] = l.maskEnabled;
         if (l.reference)
             o[QStringLiteral("reference")] = true;
+        if (!l.invoke.isEmpty())
+            o[QStringLiteral("invoke")] = l.invoke;
         if (l.isText) {
             // What was typed, so that it can still be retyped after the document comes back.
             const TextInfo t = engine.layerText(l.id);
@@ -332,6 +334,7 @@ bool load(CanvasEngine& engine, const QString& path, QString* error)
         d.info.collapsed = o[QStringLiteral("collapsed")].toBool();
         d.info.maskEnabled = o[QStringLiteral("maskEnabled")].toBool(true);
         d.info.reference = o[QStringLiteral("reference")].toBool();
+        d.info.invoke = o[QStringLiteral("invoke")].toObject();
         d.parentIndex = o[QStringLiteral("parent")].toInt(-1);
         const QJsonObject text = o[QStringLiteral("text")].toObject();
         const QJsonArray anchor = text[QStringLiteral("anchor")].toArray(), matrix = text[QStringLiteral("matrix")].toArray();

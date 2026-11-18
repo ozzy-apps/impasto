@@ -34,6 +34,19 @@ Impasto is a C++20, Qt 6 Widgets and OpenGL 4.3 painting app for Linux and Windo
 - The paper size is kept in inches (`m_paper`) as it was given, so a resolution change in a paper unit does not drift by a pixel (1 m at 150 → 300 dpi is 11811 px, not 11812).
 - Check: `IMPASTO_ONLY=canvas build/impasto --ui-shot out/ui` (15 checks, pen events at the dialog's own window; writes `ui-new-canvas*.png`). The full run calls the same checks from its windows section. The `exec()` in `MainWindow::newCanvas` is still not driven.
 
+## Invoke masks and guides (2026-11-18, not released)
+
+- Layers carry what they tell Invoke: `Layer::invoke` / `LayerInfo::invoke` (a QJsonObject; `role` inpaint/region/control, `enabled`, a region's `prompt`/`negative`, a control's `model` key, `weight`, `end`). Saved per layer in the document as `"invoke"`, copied by duplicate, undoable through `CanvasEngine::setLayerInvoke` (merges edits in a row). `InvokePanel::guideOf` reads it; an untagged top-level "Invoke Mask" (0.14) counts as an inpaint mask.
+- The panel's Image to image / Inpaint switch and Paint mask are gone: **Masks and guides** has + Inpaint, + Region, + Control and a row per tagged layer (`invokeui::GuideRow`: eye, Paint, delete; region prompt/negative; control adapter, Strength 0–2, Until 0–100 %). Rows are kept across refreshes so typing is not lost; typed text reaches the layer 600 ms later (`m_pendingGuides`, flushed before Generate). Inpainting happens when an enabled inpaint mask is painted inside the frame; several masks are unioned. New masks and regions are made at 50 % layer opacity.
+- Generate sends `CanvasEngine::renderImageWithout(bounds, masks and regions)` (visibility flipped internally, no undo step), so masks stay visible. Control layers stay in the picture while shown.
+- Graph (`InvokeClient::batchFor`, as Invoke's `buildAnimaGraph`/`addRegions`/`addAnimaLLLiteControl`): per region `alpha_mask_to_tensor` → its own `anima_text_encoder`s (mask input) → the positive/negative collections (negatives only at CFG > 1); controls and the optional inpaint adapter (`anima_lllite` with the source and a white-is-inpaint mask) → one `lllite_collection` → `denoise.control_lllite`. Uploads go in order: source, mask, adapter mask, regions, controls.
+- Checks: `IMPASTO_ONLY=invoke --ui-shot` (40 with `IMPASTO_INVOKE_LIVE=1`). `IMPASTO_INVOKE_BATCH=path` writes the test batch; it was validated against the live server's `/openapi.json` (node types, fields, edge outputs/inputs and types). **Not run: a real generation with regions, a control or the adapter.**
+
+## Palette from a Picture (2026-11-18, not released)
+
+- `PaletteMaker` (`src/ui/PaletteMaker.*`): full-window like Brush Lab, from the Palettes page's + menu (*From a Picture…*, which replaces the three From… entries) via `ColorPanel::paletteMakerRequested` → `MainWindow::showPaletteMaker`. Canvas / Reference / File, `ValueField` How many (2–60, `PaletteLibrary::fromImage`), marks on the picture (the sample nearest the middle of the pixels each colour stands for), tap a swatch to leave it out, name, Save Palette (made the default) and Save and Export… (.gpl/.swatches). Escape cancels.
+- Check: `IMPASTO_ONLY=palette --ui-shot` (9 checks; writes `ui-palette-maker*.png`). The file dialogs are not driven; the test calls `loadFile` and `saveAndExport`.
+
 ## Next steps
 
 1. Validate packaged builds on Linux and Windows, including TLS and the Flatpak connection. This iteration provides a local Linux build.
