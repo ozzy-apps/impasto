@@ -10,6 +10,9 @@ int runSelfTest(const QString& outPath);
 int runBrushSheet(const QString& outPath);
 // Strokes at working size on paper, for judging how brushes really look.
 int runBrushShowcase(const QString& outPath, const QStringList& brushIds);
+// Every brush of every set (or of the sets named) through ramps, speeds, sizes
+// and grounds: one page per set in `outDir`.
+int runBrushReview(const QString& outDir, const QStringList& sets);
 // A document with a bit of everything, written as OpenRaster and as 8- and 16-bit PSD.
 int runInterchangeSample(const QString& dir);
 // Opens a PSD or OpenRaster file and writes the picture it makes.

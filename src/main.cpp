@@ -93,6 +93,8 @@ int main(int argc, char** argv)
         return runBrushSheet(args[2]);
     if (args.size() >= 3 && args[1] == QLatin1String("--brush-showcase"))
         return runBrushShowcase(args[2], args.mid(3));
+    if (args.size() >= 3 && args[1] == QLatin1String("--brush-review"))
+        return runBrushReview(args[2], args.mid(3));
     if (args.size() >= 3 && args[1] == QLatin1String("--interchange-sample"))
         return runInterchangeSample(args[2]);
     if (args.size() >= 4 && args[1] == QLatin1String("--interchange-open"))

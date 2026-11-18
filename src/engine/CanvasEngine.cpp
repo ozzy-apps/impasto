@@ -3493,7 +3493,8 @@ void CanvasEngine::processDabs()
         // it, and remembers for itself where it last was. A wet brush is a
         // smear that brings paint of its own.
         const bool wet = m_stroke.tool == StrokeTool::Brush;
-        const float charge = wet ? std::clamp(m_stroke.preset.wetCharge, 0.02f, 1.0f) : 0.0f;
+        // A charge of nothing is a blender: it only moves the paint that is there.
+        const float charge = wet ? std::clamp(m_stroke.preset.wetCharge, 0.0f, 1.0f) : 0.0f;
         const float pull = wet ? std::clamp(m_stroke.preset.wetMix, 0.0f, 1.0f) : 1.0f;
         const size_t sets = dabs.size() / drawn;
         m_stroke.smudgePos.resize(sets);
@@ -3501,8 +3502,11 @@ void CanvasEngine::processDabs()
         for (size_t k = 0; k < sets; ++k) {
             const std::vector<Dab> one(dabs.begin() + std::ptrdiff_t(k * drawn), dabs.begin() + std::ptrdiff_t((k + 1) * drawn));
             bool has = m_stroke.hasSmudgePos[k] != 0;
-            m_dabs.smudge(m_live, m_strokeBuf.color, one, m_stroke.preset, m_stroke.opacity, m_stroke.smudgePos[k], has, selectionMask(),
-                          strokeLocked() ? &strokeTarget() : nullptr, charge, pull);
+            // A wet brush always moves the paint it meets as strongly; the
+            // stroke opacity is how opaque its own paint gets.
+            m_dabs.smudge(m_live, m_strokeBuf.color, one, m_stroke.preset, wet && charge > 0.0f ? 1.0f : m_stroke.opacity,
+                          m_stroke.smudgePos[k], has, selectionMask(), strokeLocked() ? &strokeTarget() : nullptr, charge, pull,
+                          wet ? &strokeTarget() : nullptr, m_stroke.opacity);
             m_stroke.hasSmudgePos[k] = has ? 1 : 0;
         }
     } else {

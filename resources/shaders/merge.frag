@@ -43,8 +43,10 @@ void main()
             S *= mix(1.0, g, uGrainDepth);
         } else if (uGrainMode == 2) {
             // Light coverage only catches the peaks of the tooth; as the stroke
-            // builds, the threshold drops and the valleys fill in.
-            float th = (1.0 - cover) * uGrainDepth;
+            // builds, the threshold drops and the valleys fill in. Even at
+            // full pressure the deepest pits stay a little open, as paper
+            // does under graphite, chalk or charcoal.
+            float th = (1.0 - 0.82 * cover) * uGrainDepth;
             S *= smoothstep(th - 0.25, th + 0.25, g);
         } else {
             // Same idea, shifted so full coverage is always solid: the tooth

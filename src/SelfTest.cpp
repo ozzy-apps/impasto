@@ -1055,7 +1055,7 @@ bool runBrushLibraryTests(CanvasEngine& engine)
                   .arg(lib.presets().size()).arg(sets.size()).arg(sets.value(0), sets.value(sets.size() - 1)).arg(tips.size()).arg(grains.size())
                   .arg(wrong.join(QLatin1Char(' ')) + blank.join(QLatin1Char(' '))),
               lib.presets().size() >= 110 && sets.size() == 14 && sets.value(0) == QLatin1String("Sketching") && sets.value(1) == QLatin1String("Inking")
-                  && sets.last() == QLatin1String("Abstract") && tips.size() == 30 && grains.size() == 21 && wrong.isEmpty() && blank.isEmpty()
+                  && sets.last() == QLatin1String("Abstract") && tips.size() == 32 && grains.size() == 23 && wrong.isEmpty() && blank.isEmpty()
                   && lib.inCategory(QStringLiteral("Calligraphy")).size() == 7 && lib.find(QStringLiteral("monoline"))->category == QLatin1String("Calligraphy"));
     }
     // ---- a set put in an order of one's own
@@ -5125,6 +5125,191 @@ int runBrushShowcase(const QString& outPath, const QStringList& brushIds)
     }
     p.end();
     return out.save(outPath) ? 0 : 1;
+}
+
+// One page per set, every brush in it put through what an artist would do with
+// it: a pressure ramp from nothing to full, a swell and fade, slow and fast
+// strokes, a small size, light and dark paint on white and on a coloured
+// ground, overlaps, a tilted pass and a tap. Written as <dir>/NN-<set>.png.
+int runBrushReview(const QString& outDir, const QStringList& onlySets)
+{
+    CanvasEngine engine;
+    QString error;
+    if (!engine.initialize(&error)) {
+        qCritical().noquote() << "engine init failed:" << error;
+        return 1;
+    }
+    QDir().mkpath(outDir);
+    const BrushLibrary& lib = BrushLibrary::instance();
+
+    // Every tip and grain the brushes are made of, at half size.
+    {
+        const QStringList tips = texgen::tipNames(), grains = texgen::grainNames();
+        constexpr int cell = 256, perRow = 8;
+        const int rows = int((tips.size() + perRow - 1) / perRow + (grains.size() + perRow - 1) / perRow);
+        QImage sheet(cell * perRow, (cell + 24) * rows, QImage::Format_RGB32);
+        sheet.fill(QColor(60, 60, 64));
+        QPainter p(&sheet);
+        p.setPen(Qt::white);
+        int row = 0;
+        for (int kind = 0; kind < 2; ++kind) {
+            const QStringList& names = kind == 0 ? tips : grains;
+            for (int i = 0; i < names.size(); ++i) {
+                const QImage img = (kind == 0 ? texgen::tip(names[i]) : texgen::grain(names[i])).scaled(cell, cell, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                const QPoint at((i % perRow) * cell, (row + i / perRow) * (cell + 24));
+                p.drawImage(at + QPoint(0, 24), img);
+                p.drawText(at + QPoint(6, 17), names[i]);
+            }
+            row += int((names.size() + perRow - 1) / perRow);
+        }
+        p.end();
+        sheet.save(outDir + QStringLiteral("/00-tips-and-grains.png"));
+    }
+
+    const QColor paper(250, 248, 243), ground(52, 92, 120);
+    const QColor dark(26, 26, 32), cream(246, 236, 205), red(196, 52, 44), yellow(240, 196, 40), blue(36, 72, 160);
+    constexpr int rowH = 300, width = 2320;
+    constexpr double rate = 0.005;   // a 200 Hz tablet
+
+    int setIndex = 0;
+    for (const QString& set : lib.categories()) {
+        ++setIndex;
+        if (!onlySets.isEmpty() && !onlySets.contains(set, Qt::CaseInsensitive))
+            continue;
+        const QVector<const BrushPreset*> brushes = lib.inCategory(set);
+        if (brushes.isEmpty())
+            continue;
+        engine.newDocument(QSize(width, rowH * int(brushes.size())), paper);
+        const int layer = engine.activeLayerId();
+
+        // The coloured ground of the third panel, on the layer itself, so wet
+        // brushes have something to pull and blend modes something to meet.
+        QPainterPath grounds;
+        for (int r = 0; r < brushes.size(); ++r)
+            grounds.addRect(QRectF(1190, r * rowH + 34, 560, rowH - 44));
+        engine.setSelection(grounds, QStringLiteral("ground"));
+        engine.fillLayer(layer, ground);
+        engine.clearSelection();
+
+        quint32 jitterSeed = 1;
+        // A pen moving along `path` (t = 0..1) at `speed` canvas px per second,
+        // sampled as a tablet does, with a hand's small unsteadiness.
+        auto pen = [&](const BrushPreset& b, float size, const QColor& c, const std::function<QPointF(double)>& path,
+                       double speed, const std::function<float(double)>& pressure, float tilt = 0.0f) {
+            std::vector<QPointF> dense;
+            std::vector<double> at;
+            double length = 0.0;
+            for (int i = 0; i <= 2000; ++i) {
+                const QPointF p = path(i / 2000.0);
+                if (!dense.empty())
+                    length += std::hypot(p.x() - dense.back().x(), p.y() - dense.back().y());
+                dense.push_back(p);
+                at.push_back(length);
+            }
+            const int samples = std::max(2, int(std::ceil(length / (speed * rate))) + 1);
+            std::vector<QPointF> pts;
+            std::vector<double> ts;
+            size_t j = 0;
+            for (int k = 0; k < samples; ++k) {
+                const double s = std::min(length, k * speed * rate);
+                while (j + 1 < at.size() && at[j + 1] < s)
+                    ++j;
+                const double span = j + 1 < at.size() ? at[j + 1] - at[j] : 1.0;
+                const double f = span > 0 ? (s - at[j]) / span : 0.0;
+                const QPointF p = j + 1 < dense.size() ? dense[j] + (dense[j + 1] - dense[j]) * f : dense.back();
+                pts.push_back(p);
+                ts.push_back(length > 0 ? s / length : 1.0);
+            }
+            pts = shaky(pts, 0.35, jitterSeed++);
+            for (size_t i = 0; i < pts.size(); ++i) {
+                StrokeSample smp;
+                smp.pos = pts[i];
+                smp.pressure = std::clamp(pressure(ts[i]), 0.0f, 1.0f);
+                smp.tiltX = tilt;
+                smp.time = double(i) * rate;
+                if (i == 0)
+                    engine.beginStroke(StrokeTool::Brush, b, size, b.opacity, c, smp);
+                else
+                    engine.strokeTo(smp);
+            }
+            engine.endStroke();
+        };
+        auto line = [](QPointF a, QPointF c, double wave = 0.0, double waves = 1.0) {
+            return [=](double t) {
+                const QPointF d = c - a;
+                const double len = std::hypot(d.x(), d.y());
+                const QPointF n = len > 0 ? QPointF(-d.y() / len, d.x() / len) : QPointF();
+                return a + d * t + n * (wave * std::sin(t * waves * 2.0 * M_PI));
+            };
+        };
+        auto swell = [](double t) { return float(0.04 + 0.96 * std::pow(std::sin(t * M_PI), 0.9)); };
+
+        for (int r = 0; r < brushes.size(); ++r) {
+            const BrushPreset& b = *brushes[r];
+            const double y = r * rowH;
+            const float normal = std::clamp(b.size, b.minSize, std::min(b.maxSize, 80.0f));
+            const float big = std::clamp(b.size * 1.5f, b.minSize, std::min(b.maxSize, 110.0f));
+            const float small = std::clamp(std::min(b.size * 0.3f, 6.0f), b.minSize, b.maxSize);
+
+            // 1. On paper: pressure from nothing to full, then a swell and fade.
+            pen(b, big, dark, line(QPointF(40, y + 100), QPointF(600, y + 100), 22, 1.0), 900,
+                [](double t) { return float(t); });
+            pen(b, normal, dark, line(QPointF(40, y + 220), QPointF(600, y + 220), 30, 1.5), 700, swell);
+
+            // 2. Slow and fast at the same pressure, then small loops like handwriting.
+            pen(b, normal, blue, line(QPointF(650, y + 75), QPointF(1140, y + 75), 10, 1.0), 180,
+                [](double) { return 0.6f; });
+            pen(b, normal, blue, line(QPointF(650, y + 160), QPointF(1140, y + 160), 28, 1.0), 6000,
+                [](double) { return 0.6f; });
+            pen(b, small, dark,
+                [y](double t) {
+                    const double a = t * 7.0 * 2.0 * M_PI;
+                    return QPointF(660 + t * 460 + 14 * std::cos(a + M_PI), y + 250 + 18 * std::sin(a));
+                },
+                400, [](double t) { return float(0.35 + 0.5 * std::sin(t * M_PI)); });
+
+            // 3. On the coloured ground: light paint, a dark stroke, and two
+            //    colours crossing each other.
+            pen(b, normal, cream, line(QPointF(1220, y + 80), QPointF(1720, y + 80), 16, 1.0), 700, swell);
+            pen(b, big, red, line(QPointF(1230, y + 140), QPointF(1700, y + 270)), 600, [](double) { return 0.8f; });
+            pen(b, big, yellow, line(QPointF(1230, y + 270), QPointF(1700, y + 140)), 600, [](double) { return 0.8f; });
+            pen(b, small, dark, line(QPointF(1220, y + 120), QPointF(1720, y + 120), 6, 2.0), 500, swell);
+
+            // 4. On paper: a patch of hatching built up, a tilted pass and a tap.
+            for (int k = 0; k < 7; ++k) {
+                const double x = 1800 + k * 22;
+                pen(b, normal, red, line(QPointF(x, y + 250), QPointF(x + 120, y + 60)), 1500,
+                    [k](double t) { return float((0.3 + 0.1 * k) * std::sin(t * M_PI)); });
+            }
+            pen(b, normal, dark, line(QPointF(1800, y + 280), QPointF(2290, y + 280), 8, 2.0), 400,
+                [](double) { return 0.5f; }, 50.0f);
+            pen(b, normal, dark, [y](double t) { return QPointF(2250 + t * 0.5, y + 120); }, 50, [](double) { return 0.7f; });
+        }
+
+        QImage out = engine.renderImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        QPainter p(&out);
+        QFont f = p.font();
+        f.setPixelSize(18);
+        f.setBold(true);
+        p.setFont(f);
+        for (int r = 0; r < brushes.size(); ++r) {
+            const BrushPreset& b = *brushes[r];
+            p.setPen(QColor(110, 100, 90));
+            p.drawText(QPoint(16, r * rowH + 26), QStringLiteral("%1  (%2, %3 px)").arg(b.name, b.id).arg(double(b.size)));
+            p.setPen(QColor(200, 196, 188));
+            p.drawLine(0, (r + 1) * rowH - 1, width, (r + 1) * rowH - 1);
+        }
+        p.end();
+        QString file = set.toLower();
+        file.replace(QLatin1Char(' '), QLatin1Char('-'));
+        const QString path = QStringLiteral("%1/%2-%3.png").arg(outDir).arg(setIndex, 2, 10, QLatin1Char('0')).arg(file);
+        if (!out.save(path)) {
+            qCritical().noquote() << "could not write" << path;
+            return 1;
+        }
+        qInfo().noquote() << path;
+    }
+    return 0;
 }
 
 // Times what one pen sample costs end to end: dabs, stroke merge, recomposite of

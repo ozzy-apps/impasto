@@ -10,6 +10,7 @@ out vec2 vLocalPx;
 out float vCoverage;
 out vec4 vColor;
 out vec2 vSeed;
+out vec2 vRadii;          // the tip's half-axes in pixels, for antialiasing worked out exactly
 
 void main()
 {
@@ -19,7 +20,10 @@ void main()
     float diameter = max(aPosSize.z, 1.0);
     float thin = min(aPosSize.z, 1.0);
     float roundness = clamp(aMisc.x, 0.02, 1.0);
-    vec2 radii = vec2(diameter * 0.5, max(diameter * 0.5 * roundness, 0.5));
+    // The same for a squashed tip whose short side is under a pixel: it is
+    // drawn a pixel across and faded by how much thinner it really is.
+    float minor = diameter * roundness;
+    vec2 radii = vec2(diameter * 0.5, max(minor * 0.5, 0.5));
     vec2 local = corner * (radii + 1.0);
     float c = cos(aPosSize.w);
     float s = sin(aPosSize.w);
@@ -27,7 +31,8 @@ void main()
 
     vUv = local / radii;
     vLocalPx = local;
-    vCoverage = thin * thin;
+    vCoverage = thin * thin * min(minor, 1.0);
+    vRadii = radii;
     vColor = aColor;
     vSeed = aMisc.yz;
     gl_Position = vec4(pos / uCanvasSize * 2.0 - 1.0, 0.0, 1.0);

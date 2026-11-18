@@ -103,6 +103,52 @@ float fbm(float u, float v, int basePeriod, int octaves, float gain, uint32_t se
     return sum / norm;
 }
 
+// Gradient noise that wraps every `px` by `py` lattice cells. Unlike value
+// noise it has no grid showing through, which thresholded paper tooth
+// would otherwise turn into little squares. Returns roughly -1..1.
+float gnoise(float x, float y, int px, int py, uint32_t seed)
+{
+    const int xi = int(std::floor(x)), yi = int(std::floor(y));
+    const float fx = x - float(xi), fy = y - float(yi);
+    auto wrapX = [px](int a) { return ((a % px) + px) % px; };
+    auto wrapY = [py](int a) { return ((a % py) + py) % py; };
+    auto grad = [&](int cx, int cy, float dx, float dy) {
+        const float a = rnd(wrapX(cx), wrapY(cy), seed) * 2.0f * kPi;
+        return std::cos(a) * dx + std::sin(a) * dy;
+    };
+    const float u = fx * fx * fx * (fx * (fx * 6.0f - 15.0f) + 10.0f);
+    const float v = fy * fy * fy * (fy * (fy * 6.0f - 15.0f) + 10.0f);
+    const float n00 = grad(xi, yi, fx, fy), n10 = grad(xi + 1, yi, fx - 1.0f, fy);
+    const float n01 = grad(xi, yi + 1, fx, fy - 1.0f), n11 = grad(xi + 1, yi + 1, fx - 1.0f, fy - 1.0f);
+    const float a = n00 + (n10 - n00) * u, b = n01 + (n11 - n01) * u;
+    return (a + (b - a) * v) * 1.41f;
+}
+
+// Octaves of gradient noise over the tile (u, v in 0..1); `stretch` makes the
+// cells longer across x than y (fibres, laid lines). Roughly -1..1.
+float gfbm(float u, float v, int base, int octaves, float gain, uint32_t seed, int stretch = 1)
+{
+    float sum = 0.0f, amp = 1.0f, norm = 0.0f;
+    int period = base;
+    for (int o = 0; o < octaves; ++o) {
+        const int py = period, pxp = std::max(1, period / stretch);
+        sum += amp * gnoise(u * float(pxp), v * float(py), pxp, py, seed + uint32_t(o) * 131u);
+        norm += amp;
+        amp *= gain;
+        period *= 2;
+    }
+    return sum / norm;
+}
+
+// Soft bumps, one in each cell of a wrapping grid: the raised tooth of a
+// paper. 1 on top of a bump, falling to 0 between them.
+float bumps(float u, float v, int cells, uint32_t seed)
+{
+    float nearest = 0.0f, second = 0.0f;
+    cellDistances(u, v, cells, seed, &nearest, &second);
+    return std::clamp(1.0f - nearest * 1.25f, 0.0f, 1.0f);
+}
+
 struct Rng {
     uint32_t s;
     float next()
@@ -128,6 +174,35 @@ QImage toImage(const Field& f)
     return img;
 }
 
+// Spreads the values of a texture evenly over 0..1, keeping their order.
+// Paper tooth is used by threshold: light pressure catches the top tenth of
+// it, harder pressure the top half. Even values make that response even, so
+// a pressure ramp shades smoothly instead of jumping.
+void equalize(Field& f)
+{
+    std::vector<std::pair<float, uint32_t>> order(f.size());
+    for (uint32_t i = 0; i < f.size(); ++i)
+        order[i] = {f[i], i};
+    std::sort(order.begin(), order.end());
+    const float n = float(f.size() - 1);
+    for (size_t r = 0; r < order.size(); ++r)
+        f[order[r].second] = float(r) / n;
+}
+
+QImage renderEven(const std::function<float(float, float, float, float)>& fn)
+{
+    Field f(size_t(kSize) * kSize);
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const float u = (float(x) + 0.5f) / kSize;
+            const float v = (float(y) + 0.5f) / kSize;
+            f[size_t(y) * kSize + x] = fn(u * 2.0f - 1.0f, v * 2.0f - 1.0f, u, v);
+        }
+    }
+    equalize(f);
+    return toImage(f);
+}
+
 // fn receives pixel-centre coordinates mapped to -1..1 (x, y) and 0..1 (u, v).
 QImage render(const std::function<float(float, float, float, float)>& fn)
 {
@@ -151,6 +226,24 @@ void splat(Field& f, float cx, float cy, float r, float intensity, float hardnes
         for (int x = x0; x <= x1; ++x) {
             const float d = std::hypot(float(x) + 0.5f - cx, float(y) + 0.5f - cy) / r;
             const float a = intensity * smooth(1.0f, hardness, d);
+            float& p = f[size_t(y) * kSize + x];
+            p = std::max(p, a);
+        }
+    }
+}
+
+// A soft ellipse, max-blended: rx across, ry down, in pixels, turned by `angle`.
+void splatOval(Field& f, float cx, float cy, float rx, float ry, float angle, float intensity, float hardness)
+{
+    const float r = std::max(rx, ry);
+    const float c = std::cos(angle), sn = std::sin(angle);
+    const int x0 = std::max(0, int(cx - r - 1)), x1 = std::min(kSize - 1, int(cx + r + 1));
+    const int y0 = std::max(0, int(cy - r - 1)), y1 = std::min(kSize - 1, int(cy + r + 1));
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            const float dx = float(x) + 0.5f - cx, dy = float(y) + 0.5f - cy;
+            const float lx = (c * dx + sn * dy) / rx, ly = (-sn * dx + c * dy) / ry;
+            const float a = intensity * smooth(1.0f, hardness, std::hypot(lx, ly));
             float& p = f[size_t(y) * kSize + x];
             p = std::max(p, a);
         }
@@ -212,7 +305,9 @@ QImage blades(uint32_t seed, int count, float baseY, float spreadX, float length
 
 // Clusters of bristle ends inside an ellipse. Dragged along a stroke they leave
 // parallel streaks, which is where the painterly look comes from.
-QImage bristles(uint32_t seed, float rx, float ry, int count, float dotMin, float dotMax)
+// Each bristle end is drawn a little longer along x than across: dragged
+// along the stroke the stamps run together into streaks instead of beading.
+QImage bristles(uint32_t seed, float rx, float ry, int count, float dotMin, float dotMax, float stretch = 1.8f)
 {
     Field f(size_t(kSize) * kSize, 0.0f);
     Rng rng{seed};
@@ -222,26 +317,54 @@ QImage bristles(uint32_t seed, float rx, float ry, int count, float dotMin, floa
         const float x = 0.5f + std::cos(ang) * rad * rx;
         const float y = 0.5f + std::sin(ang) * rad * ry;
         const float r = rng.range(dotMin, dotMax) * kSize;
-        splat(f, x * kSize, y * kSize, r, rng.range(0.55f, 1.0f), 0.35f);
+        // Bristles near the rim carry less paint.
+        const float load = rng.range(0.55f, 1.0f) * (1.0f - 0.35f * rad * rad);
+        const float along = std::min(r * stretch, (0.49f - std::abs(x - 0.5f)) * kSize);
+        splatOval(f, x * kSize, y * kSize, std::max(along, r), r, 0.0f, load, 0.35f);
     }
     return toImage(f);
 }
 
+// Paint thrown at the paper: a few big drops, each with a crown of small
+// ones and some tails flung outwards, and a fine mist between them.
 QImage splatter(uint32_t seed)
 {
     Field f(size_t(kSize) * kSize, 0.0f);
     Rng rng{seed};
-    for (int i = 0; i < 90; ++i) {
-        // Box-Muller keeps most droplets near the centre with a few strays.
-        const float m = 0.17f * std::sqrt(-2.0f * std::log(std::max(rng.next(), 1e-5f)));
+    auto inside = [](float x, float y, float r) { return std::hypot(x - 0.5f, y - 0.5f) + r / kSize < 0.48f; };
+    for (int i = 0; i < 7; ++i) {
+        const float m = 0.2f * std::sqrt(rng.next());
         const float ang = rng.range(0.0f, 2.0f * kPi);
-        const float x = 0.5f + std::cos(ang) * m;
-        const float y = 0.5f + std::sin(ang) * m;
-        const float t = rng.next();
-        const float r = (0.004f + 0.04f * t * t * t) * kSize;
-        if (std::hypot(x - 0.5f, y - 0.5f) + r / kSize > 0.49f)
+        const float x = 0.5f + std::cos(ang) * m, y = 0.5f + std::sin(ang) * m;
+        const float r = rng.range(0.025f, 0.06f) * kSize;
+        if (!inside(x, y, r))
             continue;
-        splat(f, x * kSize, y * kSize, r, rng.range(0.6f, 1.0f), 0.6f);
+        // The drop, not quite round.
+        splatOval(f, x * kSize, y * kSize, r * rng.range(0.85f, 1.2f), r, rng.range(0.0f, kPi), 1.0f, 0.75f);
+        const int crown = 5 + int(rng.next() * 9);
+        for (int k = 0; k < crown; ++k) {
+            const float a = rng.range(0.0f, 2.0f * kPi);
+            const float d = r * rng.range(1.2f, 2.6f);
+            const float cx = x * kSize + std::cos(a) * d, cy = y * kSize + std::sin(a) * d;
+            const float cr = r * rng.range(0.08f, 0.28f);
+            if (!inside(cx / kSize, cy / kSize, cr * 3.0f))
+                continue;
+            if (rng.next() < 0.4f) {
+                // A tail flung outwards, thinning to its end.
+                drag(f, x * kSize + std::cos(a) * r * 0.8f, y * kSize + std::sin(a) * r * 0.8f, cx, cy, r * 0.22f, cr * 0.6f, 1.0f, 0.7f);
+            }
+            splat(f, cx, cy, cr, 1.0f, 0.7f);
+        }
+    }
+    for (int i = 0; i < 140; ++i) {
+        const float m = 0.16f * std::sqrt(-2.0f * std::log(std::max(rng.next(), 1e-5f)));
+        const float ang = rng.range(0.0f, 2.0f * kPi);
+        const float x = 0.5f + std::cos(ang) * m, y = 0.5f + std::sin(ang) * m;
+        const float t = rng.next();
+        const float r = (0.003f + 0.012f * t * t) * kSize;
+        if (!inside(x, y, r))
+            continue;
+        splat(f, x * kSize, y * kSize, r, rng.range(0.7f, 1.0f), 0.65f);
     }
     return toImage(f);
 }
@@ -272,6 +395,7 @@ const Named kTips[] = {
     {"drop", QT_TRANSLATE_NOOP("texgen", "Raindrop")},          {"snow", QT_TRANSLATE_NOOP("texgen", "Snowflake")},
     {"star", QT_TRANSLATE_NOOP("texgen", "Sparkle")},           {"glow", QT_TRANSLATE_NOOP("texgen", "Glow")},
     {"bokeh", QT_TRANSLATE_NOOP("texgen", "Bokeh")},            {"bubble", QT_TRANSLATE_NOOP("texgen", "Bubble")},
+    {"flick", QT_TRANSLATE_NOOP("texgen", "Flick")},            {"strands", QT_TRANSLATE_NOOP("texgen", "Strands")},
 };
 
 const Named kGrains[] = {
@@ -285,7 +409,8 @@ const Named kGrains[] = {
     {"crackle", QT_TRANSLATE_NOOP("texgen", "Crackle")},          {"halftone", QT_TRANSLATE_NOOP("texgen", "Halftone dots")},
     {"halftone_coarse", QT_TRANSLATE_NOOP("texgen", "Coarse dots")}, {"lines", QT_TRANSLATE_NOOP("texgen", "Line screen")},
     {"hatch", QT_TRANSLATE_NOOP("texgen", "Hatching")},           {"crosshatch", QT_TRANSLATE_NOOP("texgen", "Crosshatching")},
-    {"waves", QT_TRANSLATE_NOOP("texgen", "Waves")},
+    {"waves", QT_TRANSLATE_NOOP("texgen", "Waves")},              {"halftone_cone", QT_TRANSLATE_NOOP("texgen", "Halftone screen")},
+    {"pen_hatch", QT_TRANSLATE_NOOP("texgen", "Inked hatching")},
 };
 
 template <size_t N> QStringList namesOf(const Named (&table)[N])
@@ -330,11 +455,11 @@ QString grainTitle(const QString& name)
 QImage tip(const QString& name)
 {
     if (name == QLatin1String("bristle"))
-        return bristles(11, 0.44f, 0.44f, 300, 0.016f, 0.045f);
+        return bristles(11, 0.44f, 0.44f, 320, 0.014f, 0.04f);
     if (name == QLatin1String("flat_bristle"))
-        return bristles(23, 0.15f, 0.45f, 230, 0.012f, 0.03f);
+        return bristles(23, 0.15f, 0.45f, 260, 0.011f, 0.028f, 2.2f);
     if (name == QLatin1String("dry"))
-        return bristles(37, 0.3f, 0.45f, 120, 0.008f, 0.022f);
+        return bristles(37, 0.3f, 0.45f, 110, 0.008f, 0.02f, 6.0f);
     if (name == QLatin1String("splatter"))
         return splatter(53);
     if (name == QLatin1String("chalk")) {
@@ -380,20 +505,27 @@ QImage tip(const QString& name)
         });
     }
     if (name == QLatin1String("fan")) {
-        // Bristle ends along a shallow arc: dragged, a spread of fine streaks.
+        // Bristle ends along a shallow arc, each a short dash lying along the
+        // stroke (y here: the fan is turned across it), so that dragged they
+        // leave unbroken fine streaks.
         Field f(size_t(kSize) * kSize, 0.0f);
         Rng rng{61};
-        for (int i = 0; i < 150; ++i) {
+        for (int i = 0; i < 170; ++i) {
             const float t = rng.range(-1.0f, 1.0f);
-            const float x = 0.5f + t * 0.45f, y = 0.5f + t * t * 0.09f - 0.03f + rng.range(-0.022f, 0.022f);
-            splat(f, x * kSize, y * kSize, rng.range(0.008f, 0.02f) * kSize, rng.range(0.5f, 1.0f), 0.4f);
+            const float x = 0.5f + t * 0.45f, y = 0.5f + t * t * 0.09f - 0.03f + rng.range(-0.02f, 0.02f);
+            const float r = rng.range(0.006f, 0.016f) * kSize;
+            splatOval(f, x * kSize, y * kSize, r, r * 3.5f, 0.0f, rng.range(0.5f, 1.0f) * (1.0f - 0.4f * t * t), 0.4f);
         }
         return toImage(f);
     }
     if (name == QLatin1String("rake")) {
+        // Six tines, each a rounded stub along the stroke, none quite like the others.
         Field f(size_t(kSize) * kSize, 0.0f);
-        for (int i = 0; i < 6; ++i)
-            splat(f, (0.5f + (float(i) - 2.5f) * 0.165f) * kSize, 0.5f * kSize, 0.048f * kSize, 1.0f, 0.75f);
+        Rng rng{67};
+        for (int i = 0; i < 6; ++i) {
+            const float r = 0.045f * kSize * rng.range(0.9f, 1.08f);
+            splatOval(f, (0.5f + (float(i) - 2.5f) * 0.165f) * kSize, 0.5f * kSize, r, r * 1.9f, 0.0f, rng.range(0.9f, 1.0f), 0.7f);
+        }
         return toImage(f);
     }
     if (name == QLatin1String("knife")) {
@@ -468,9 +600,31 @@ QImage tip(const QString& name)
     if (name == QLatin1String("grass"))
         return blades(137, 9, 0.94f, 0.2f, 0.82f, 0.42f, 0.02f);
     if (name == QLatin1String("fur")) {
-        // Hairs lying along x, so that they follow the stroke.
-        const QImage up = blades(139, 26, 0.93f, 0.4f, 0.8f, 0.2f, 0.008f);
-        return up.transformed(QTransform().rotate(90));
+        // Fine hairs lying along x, so that they follow the stroke: each one
+        // thickest a third of the way along and tapering to both ends, with a
+        // slight curve. They thin out towards the rim, so nothing is cut off.
+        Field f(size_t(kSize) * kSize, 0.0f);
+        Rng rng{139};
+        for (int i = 0; i < 70; ++i) {
+            const float cy = 0.5f + rng.range(-0.36f, 0.36f), cx = 0.5f + rng.range(-0.16f, 0.16f);
+            const float len = rng.range(0.26f, 0.42f) * (1.0f - 1.2f * std::abs(cy - 0.5f));
+            const float bend = rng.range(-0.06f, 0.06f), lean = rng.range(-0.12f, 0.12f);
+            const float thick = rng.range(1.0f, 2.2f);
+            const float tone = rng.range(0.55f, 1.0f);
+            constexpr int steps = 18;
+            float px = (cx - len * 0.5f) * kSize, py = cy * kSize;
+            for (int k = 1; k <= steps; ++k) {
+                const float t = float(k) / float(steps);
+                const float nx = (cx - len * 0.5f + len * t) * kSize;
+                const float ny = (cy + lean * len * (t - 0.5f) + bend * std::sin(t * kPi)) * kSize;
+                const float w0 = thick * std::sin(kPi * std::pow(float(k - 1) / steps, 0.7f)) + 0.35f;
+                const float w1 = thick * std::sin(kPi * std::pow(t, 0.7f)) + 0.35f;
+                drag(f, px, py, nx, ny, w0, w1, tone, 0.3f);
+                px = nx;
+                py = ny;
+            }
+        }
+        return toImage(f);
     }
     if (name == QLatin1String("flower")) {
         return render([](float x, float y, float, float) {
@@ -534,32 +688,67 @@ QImage tip(const QString& name)
             return std::clamp(rim + 0.14f * smooth(0.82f, 0.78f, d) + shine, 0.0f, 1.0f);
         });
     }
+    if (name == QLatin1String("flick")) {
+        // Paint flicked off a brush: a drop with a tail, the drop ahead (+x).
+        Field f(size_t(kSize) * kSize, 0.0f);
+        const float c = kSize * 0.5f;
+        drag(f, c - 0.42f * kSize, c + 0.01f * kSize, c + 0.22f * kSize, c, 1.2f, 0.07f * kSize, 1.0f, 0.75f);
+        splatOval(f, c + 0.28f * kSize, c, 0.1f * kSize, 0.085f * kSize, 0.0f, 1.0f, 0.8f);
+        splat(f, c + 0.44f * kSize, c - 0.06f * kSize, 0.022f * kSize, 1.0f, 0.7f);
+        return toImage(f);
+    }
+    if (name == QLatin1String("strands")) {
+        // A dozen fine lines side by side, lying along the stroke (x), of
+        // uneven weight: drawn they become a lock of hair.
+        Field f(size_t(kSize) * kSize, 0.0f);
+        Rng rng{263};
+        for (int i = 0; i < 13; ++i) {
+            const float y = 0.5f + (float(i) - 6.0f) / 6.0f * 0.4f + rng.range(-0.02f, 0.02f);
+            const float w = rng.range(4.0f, 8.0f) * (1.0f - 0.5f * std::abs(y - 0.5f) / 0.42f);
+            splatOval(f, 0.5f * kSize, y * kSize, 0.2f * kSize, w, 0.0f, rng.range(0.6f, 1.0f), 0.55f);
+        }
+        return toImage(f);
+    }
     return render([](float x, float y, float, float) { return smooth(1.0f, 0.9f, std::hypot(x, y)); });
+}
+
+// Dots on a 45-degree screen: what `dot` makes of the distance from the
+// nearest dot's centre, in cells (0 at the centre, 0.71 between dots). The
+// screen is turned by measuring along the two diagonals, which tiles exactly.
+static QImage screen(int cells, const std::function<float(float)>& dot)
+{
+    return render([cells, &dot](float, float, float u, float v) {
+        const float a = (u + v) * float(cells), b = (u - v) * float(cells);
+        const float da = a - std::floor(a) - 0.5f, db = b - std::floor(b) - 0.5f;
+        return dot(std::hypot(da, db));
+    });
 }
 
 QImage grain(const QString& name)
 {
     if (name == QLatin1String("paper")) {
-        return render([](float, float, float u, float v) {
-            return smooth(0.26f, 0.74f, fbm(u, v, 48, 4, 0.6f, 101));
+        // Drawing paper: a close tooth of small bumps, uneven in height, over
+        // a gentle unevenness of the sheet.
+        return renderEven([](float, float, float u, float v) {
+            return 0.55f * bumps(u, v, 96, 101) + 0.3f * gfbm(u, v, 128, 2, 0.6f, 103) + 0.15f * gfbm(u, v, 16, 3, 0.5f, 107);
         });
     }
     if (name == QLatin1String("fine")) {
-        return render([](float, float, float u, float v) {
-            return smooth(0.28f, 0.72f, fbm(u, v, 128, 3, 0.8f, 131));
+        // Smooth bristol: the tooth is there, but small and shallow.
+        return renderEven([](float, float, float u, float v) {
+            return 0.5f * bumps(u, v, 160, 131) + 0.4f * gfbm(u, v, 256, 1, 0.5f, 133) + 0.1f * gfbm(u, v, 32, 2, 0.5f, 137);
         });
     }
     if (name == QLatin1String("charcoal")) {
-        return render([](float, float, float u, float v) {
-            const float coarse = smooth(0.36f, 0.64f, fbm(u, v, 72, 3, 0.75f, 151));
-            const float speck = fbm(u, v, 256, 1, 1.0f, 157);
-            return std::clamp(coarse * 0.85f + speck * 0.15f, 0.0f, 1.0f);
+        // Charcoal paper (laid): a fine tooth crossed by the faint ribbing the
+        // sheet took from its mould, which is what charcoal catches on.
+        return renderEven([](float, float, float u, float v) {
+            const float laid = 0.5f + 0.5f * std::sin(2.0f * kPi * (64.0f * v + 0.6f * gfbm(u, v, 8, 2, 0.5f, 149)));
+            return 0.45f * bumps(u, v, 112, 151) + 0.3f * gfbm(u, v, 160, 2, 0.6f, 153) + 0.25f * laid;
         });
     }
     if (name == QLatin1String("blotch")) {
-        return render([](float, float, float u, float v) {
-            return smooth(0.3f, 0.7f, fbm(u, v, 8, 5, 0.55f, 171));
-        });
+        return renderEven([](float, float, float u, float v) { return gfbm(u, v, 6, 5, 0.55f, 171); });
     }
     if (name == QLatin1String("canvas")) {
         // Plain weave: alternating over/under threads plus a little fibre noise.
@@ -575,22 +764,20 @@ QImage grain(const QString& name)
         });
     }
     if (name == QLatin1String("halftone")) {
-        // Round dots on a 45-degree screen, as in printed comics. Two crossed
-        // cosines peak on a diagonal lattice and tile exactly.
-        return render([](float, float, float u, float v) {
-            constexpr float cells = 32.0f;
-            const float f = 0.5f + 0.25f * (std::cos(2.0f * kPi * cells * (u + v)) + std::cos(2.0f * kPi * cells * (u - v)));
-            return smooth(0.53f, 0.73f, f);   // about a quarter ink, with a soft pixel of edge
-        });
+        // Round dots on a 45-degree screen, as in printed comics: about a
+        // quarter of the area inked, with half a pixel of soft edge.
+        return screen(32, [](float d) { return smooth(0.3f, 0.265f, d); });
     }
     if (name == QLatin1String("cold_press")) {
-        // Watercolour paper: broad, soft hollows.
-        return render([](float, float, float u, float v) { return smooth(0.3f, 0.7f, fbm(u, v, 22, 4, 0.55f, 201)); });
+        // Watercolour paper: broad, soft hills with a fine tooth on them.
+        return renderEven([](float, float, float u, float v) {
+            return 0.3f * bumps(u, v, 40, 201) + 0.45f * gfbm(u, v, 20, 4, 0.55f, 203) + 0.25f * gfbm(u, v, 160, 2, 0.5f, 205);
+        });
     }
     if (name == QLatin1String("fibre")) {
-        return render([](float, float, float u, float v) {
-            const float longways = 0.6f * vnoise2(u * 7.0f, v * 150.0f, 7, 150, 205) + 0.4f * vnoise2(u * 14.0f, v * 250.0f, 14, 250, 207);
-            return std::clamp(smooth(0.3f, 0.7f, longways) * 0.85f + fbm(u, v, 128, 2, 0.8f, 209) * 0.15f, 0.0f, 1.0f);
+        // Long fibres lying along x, over a light tooth.
+        return renderEven([](float, float, float u, float v) {
+            return 0.65f * gfbm(u, v, 96, 3, 0.6f, 205, 12) + 0.35f * gfbm(u, v, 128, 2, 0.6f, 209);
         });
     }
     if (name == QLatin1String("linen")) {
@@ -616,25 +803,31 @@ QImage grain(const QString& name)
         });
     }
     if (name == QLatin1String("sand"))
-        return render([](float, float, float u, float v) { return smooth(0.38f, 0.62f, fbm(u, v, 256, 2, 0.9f, 221)); });
+        return renderEven([](float, float, float u, float v) { return 0.7f * bumps(u, v, 200, 221) + 0.3f * gfbm(u, v, 256, 1, 0.5f, 223); });
     if (name == QLatin1String("speckle")) {
         // Mostly open, with scattered grains standing up.
-        return render([](float, float, float u, float v) { return smooth(0.58f, 0.72f, fbm(u, v, 150, 2, 0.6f, 223)); });
+        return render([](float, float, float u, float v) { return smooth(0.62f, 0.78f, 0.5f + 0.5f * gfbm(u, v, 150, 2, 0.6f, 223)); });
     }
     if (name == QLatin1String("concrete")) {
-        return render([](float, float, float u, float v) {
-            const float pits = smooth(0.62f, 0.5f, fbm(u, v, 90, 2, 0.7f, 227));
-            return std::clamp(0.55f * smooth(0.3f, 0.7f, fbm(u, v, 10, 4, 0.6f, 229)) + 0.45f * pits, 0.0f, 1.0f);
+        // A trowelled surface: slow variation, pocked with holes of every size.
+        return renderEven([](float, float, float u, float v) {
+            const float pits = std::min(smooth(0.0f, 0.25f, 1.0f - bumps(u, v, 40, 227) * 1.3f), smooth(0.0f, 0.2f, 1.0f - bumps(u, v, 110, 228) * 1.15f));
+            return 0.45f * gfbm(u, v, 8, 4, 0.6f, 229) + 0.25f * gfbm(u, v, 128, 2, 0.6f, 231) + 0.55f * pits;
         });
     }
     if (name == QLatin1String("clouds"))
-        return render([](float, float, float u, float v) { return smooth(0.25f, 0.75f, fbm(u, v, 4, 5, 0.55f, 233)); });
+        return renderEven([](float, float, float u, float v) { return gfbm(u, v, 3, 6, 0.55f, 233); });
     if (name == QLatin1String("wood")) {
-        // Growth rings seen along the plank, wandering a little.
+        // Plank seen along its length: fine, close growth lines that wander
+        // and pinch, with the open fibres between them.
         return render([](float, float, float u, float v) {
-            const float wander = vnoise2(u * 3.0f, v * 10.0f, 3, 10, 237) + 0.4f * vnoise2(u * 9.0f, v * 40.0f, 9, 40, 239);
-            const float ring = 0.5f + 0.5f * std::sin(2.0f * kPi * (11.0f * v + 1.6f * wander));
-            return std::clamp(smooth(0.15f, 0.85f, ring) * 0.85f + fbm(u, v, 160, 2, 0.8f, 241) * 0.15f, 0.0f, 1.0f);
+            const float wander = 0.9f * gfbm(u, v, 2, 3, 0.5f, 237) + 0.25f * gfbm(u, v, 6, 2, 0.5f, 238, 2);
+            const float ring = 26.0f * v + 2.2f * wander;
+            const float f = ring - std::floor(ring);
+            // Late wood: a thin dark line at the end of each year's growth.
+            const float line = smooth(0.78f, 0.93f, f) * smooth(1.0f, 0.95f, f);
+            const float fibres = 0.5f + 0.5f * gfbm(u, v, 160, 2, 0.6f, 241, 16);
+            return std::clamp(0.12f + 0.75f * line + 0.3f * (fibres - 0.5f) + 0.15f * smooth(0.3f, 0.75f, f), 0.0f, 1.0f);
         });
     }
     if (name == QLatin1String("crackle")) {
@@ -644,13 +837,8 @@ QImage grain(const QString& name)
             return smooth(0.03f, 0.11f, second - nearest);   // raised everywhere but along the cracks
         });
     }
-    if (name == QLatin1String("halftone_coarse")) {
-        return render([](float, float, float u, float v) {
-            constexpr float cells = 14.0f;
-            const float f = 0.5f + 0.25f * (std::cos(2.0f * kPi * cells * (u + v)) + std::cos(2.0f * kPi * cells * (u - v)));
-            return smooth(0.5f, 0.6f, f);
-        });
-    }
+    if (name == QLatin1String("halftone_coarse"))
+        return screen(14, [](float d) { return smooth(0.37f, 0.35f, d); });
     if (name == QLatin1String("lines"))
         return render([](float, float, float, float v) { return smooth(0.5f, 0.66f, 0.5f + 0.5f * std::cos(2.0f * kPi * 44.0f * v)); });
     if (name == QLatin1String("hatch"))
@@ -665,6 +853,30 @@ QImage grain(const QString& name)
     if (name == QLatin1String("waves")) {
         return render([](float, float, float u, float v) {
             return smooth(0.5f, 0.68f, 0.5f + 0.5f * std::sin(2.0f * kPi * (22.0f * v + 0.45f * std::sin(2.0f * kPi * 4.0f * u))));
+        });
+    }
+    if (name == QLatin1String("halftone_cone")) {
+        // Not dots but the height of the screen: highest at each dot's centre.
+        // Used as tooth, light pressure prints small dots and firm pressure
+        // big ones that close up, as a real halftone does.
+        return screen(24, [](float d) { return std::clamp(1.0f - d / 0.7071f, 0.0f, 1.0f); });
+    }
+    if (name == QLatin1String("pen_hatch")) {
+        // Hatching ruled by hand at 45 degrees: lines of uneven weight that
+        // wander a little, lift off here and there, and are not quite evenly
+        // spaced. Used as tooth, light pressure leaves only the strongest.
+        return render([](float, float, float u, float v) {
+            constexpr int lines = 34;
+            const float along = u - v;   // runs down each line
+            const float s = (u + v) * float(lines) + 0.18f * gfbm(u, v, 4, 2, 0.5f, 251) + 0.05f * std::sin(2.0f * kPi * 3.0f * along);
+            const int i = int(std::floor(s));
+            const int k = ((i % lines) + lines) % lines;
+            const float f = s - std::floor(s) - 0.5f - 0.18f * (rnd(k, 1, 253) - 0.5f);
+            const float weight = 0.12f + 0.16f * rnd(k, 2, 255) + 0.06f * gfbm(u, v, 24, 2, 0.5f, 257 + uint32_t(k) % 5u);
+            const float ink = smooth(weight + 0.04f, weight - 0.04f, std::abs(f));
+            // Strength along the line: where the pen pressed and where it lifted.
+            const float press = 0.55f + 0.45f * gfbm(u, v, 12, 2, 0.5f, 259 + uint32_t(k) * 7u);
+            return std::clamp(ink * (0.35f + 0.65f * press), 0.0f, 1.0f);
         });
     }
     return render([](float, float, float, float) { return 1.0f; });

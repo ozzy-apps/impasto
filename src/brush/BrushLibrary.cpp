@@ -547,9 +547,9 @@ static std::vector<BrushPreset> moreBrushes()
     {
         BrushPreset& b = brush("pencil-2b", "2B Pencil", "Sketching");
         b.hardness = 0.62f; b.spacing = 0.07f; range(b, 6, 1, 60);
-        b.flow = 0.25f; b.pressureFlow = 0.97f; b.pressureSize = 0.25f; b.pressureGamma = 1.6f;
+        b.flow = 0.25f; b.pressureFlow = 0.97f; b.pressureSize = 0.25f; b.pressureGamma = 1.35f;
         b.tiltSize = 1.9f; b.tiltFlow = 0.42f; b.streamline = 0.05f;
-        setGrain(b, "fine", Grain::Height, 0.8f, 0.7f);
+        setGrain(b, "paper", Grain::Height, 0.8f, 0.5f);
     }
     {
         // Held flat, for laying in tone: wide, pale, all tooth.
@@ -564,14 +564,14 @@ static std::vector<BrushPreset> moreBrushes()
         b.hardness = 0.72f; b.spacing = 0.06f; range(b, 7, 1, 60);
         b.flow = 0.38f; b.pressureFlow = 0.9f; b.pressureSize = 0.25f; b.pressureGamma = 1.3f;
         b.tiltSize = 1.4f; b.tiltFlow = 0.35f; b.streamline = 0.08f;
-        setGrain(b, "paper", Grain::Height, 0.82f, 0.42f);
+        setGrain(b, "paper", Grain::Height, 0.75f, 0.6f);
     }
     {
         BrushPreset& b = brush("conte", "Conté Crayon", "Sketching");
         b.tip = QStringLiteral("chalk"); b.roundness = 0.7f; b.angleJitter = 0.03f;
         b.spacing = 0.07f; range(b, 16, 3, 160);
         b.flow = 0.55f; b.pressureFlow = 0.85f; b.pressureSize = 0.15f; b.tiltSize = 1.0f; b.streamline = 0.05f;
-        setGrain(b, "cold_press", Grain::Height, 0.85f, 0.4f);
+        setGrain(b, "paper", Grain::Height, 0.85f, 0.6f);
     }
 
     // --------------------------------------------------------------- Inking
@@ -608,10 +608,13 @@ static std::vector<BrushPreset> moreBrushes()
         b.pressureSize = 0.3f; b.streamline = 0.35f;
     }
     {
+        // One crisp round dot at a time, set down a dot or two apart around
+        // the line: pressing harder makes them bigger, so tone is built by
+        // where the pen lingers, as stippling is.
         BrushPreset& b = brush("stipple-pen", "Stipple Pen", "Inking");
-        b.tip = QStringLiteral("stipple"); b.angleJitter = 1.0f;
-        b.spacing = 0.55f; b.scatter = 0.15f; range(b, 36, 6, 300);
-        b.pressureSize = 0.3f; b.sizeJitter = 0.2f; b.streamline = 0.0f;
+        b.hardness = 0.95f;
+        b.spacing = 1.9f; b.scatter = 1.6f; range(b, 6, 1, 60);
+        b.pressureSize = 0.75f; b.pressureGamma = 1.2f; b.sizeJitter = 0.3f; b.streamline = 0.0f;
     }
 
     // -------------------------------------------------------------- Drawing
@@ -634,7 +637,7 @@ static std::vector<BrushPreset> moreBrushes()
         b.tip = QStringLiteral("pastel"); b.angleJitter = 1.0f;
         b.spacing = 0.08f; range(b, 44, 6, 400);
         b.flow = 0.32f; b.pressureFlow = 0.9f; b.sizeJitter = 0.08f; b.streamline = 0.05f;
-        setGrain(b, "cold_press", Grain::Height, 0.9f, 0.5f);
+        setGrain(b, "paper", Grain::Height, 0.85f, 0.8f);
     }
     {
         BrushPreset& b = brush("carbon-pencil", "Carbon Pencil", "Drawing");
@@ -652,10 +655,13 @@ static std::vector<BrushPreset> moreBrushes()
     }
     {
         // A band of ruled strokes that follows the hand: hatching by the yard.
+        // Shade an area and it fills with hatching ruled by hand, fixed to
+        // the page: light pressure leaves only the strongest lines, more
+        // pressure or going over again fills in the rest.
         BrushPreset& b = brush("hatch-shader", "Hatch Shader", "Drawing");
-        b.tip = QStringLiteral("hatch"); b.angleSource = Angle::Direction;
-        b.spacing = 0.22f; range(b, 90, 12, 500);
-        b.flow = 0.75f; b.pressureFlow = 0.5f; b.sizeJitter = 0.05f; b.streamline = 0.2f;
+        b.hardness = 0.7f; b.spacing = 0.06f; range(b, 110, 12, 800);
+        b.flow = 0.3f; b.pressureFlow = 0.9f; b.pressureGamma = 1.2f; b.streamline = 0.15f;
+        setGrain(b, "pen_hatch", Grain::Height, 1.0f, 0.75f);
     }
     tone("crosshatch-shader", "Crosshatch Shader", "Drawing", "crosshatch", Grain::Height, 0.8f, 0.5f).pressureFlow = 0.9f;
 
@@ -721,14 +727,14 @@ static std::vector<BrushPreset> moreBrushes()
     }
     {
         BrushPreset& b = brush("fan-brush", "Fan Brush", "Painting");
-        b.tip = QStringLiteral("fan"); b.angleSource = Angle::Direction; b.angle = 90;
-        b.spacing = 0.03f; range(b, 90, 12, 600);
+        b.tip = QStringLiteral("fan"); b.angleSource = Angle::Direction; b.angle = 90; b.angleJitter = 0.006f;
+        b.spacing = 0.015f; range(b, 90, 12, 600);
         b.flow = 0.85f; b.pressureFlow = 0.6f; b.speedFlow = 0.4f; b.streamline = 0.1f;
     }
     {
         BrushPreset& b = brush("rake-brush", "Rake Brush", "Painting");
         b.tip = QStringLiteral("rake"); b.angleSource = Angle::Direction; b.angle = 90;
-        b.spacing = 0.03f; range(b, 80, 10, 500);
+        b.spacing = 0.012f; range(b, 80, 10, 500);
         b.flow = 0.7f; b.pressureFlow = 0.6f; b.valJitter = 0.03f; b.streamline = 0.12f;
     }
     {
@@ -744,21 +750,21 @@ static std::vector<BrushPreset> moreBrushes()
         b.tip = QStringLiteral("bristle"); b.angleSource = Angle::Direction;
         b.spacing = 0.04f; range(b, 60, 8, 500);
         b.pressureFlow = 0.3f; b.pressureSize = 0.2f; b.streamline = 0.1f;
-        b.wetMix = 0.8f; b.wetCharge = 0.45f;
+        b.wetMix = 0.8f; b.wetCharge = 0.7f;
     }
     {
         BrushPreset& b = brush("wet-acrylic", "Wet Acrylic", "Painting");
         b.tip = QStringLiteral("flat_bristle"); b.angleSource = Angle::Direction;
         b.spacing = 0.04f; range(b, 56, 8, 500);
         b.pressureFlow = 0.3f; b.streamline = 0.1f;
-        b.wetMix = 0.5f; b.wetCharge = 0.7f;
+        b.wetMix = 0.5f; b.wetCharge = 0.9f;
     }
     {
         // Hardly any paint of its own: it softens and blends what is there.
         BrushPreset& b = brush("blender", "Blender", "Painting");
         b.hardness = 0.3f; b.spacing = 0.05f; range(b, 70, 8, 600);
         b.flow = 0.8f; b.pressureFlow = 0.6f; b.streamline = 0.1f;
-        b.wetMix = 1.0f; b.wetCharge = 0.04f;
+        b.wetMix = 1.0f; b.wetCharge = 0.0f;   // none at all: on bare canvas it leaves nothing
     }
     {
         BrushPreset& b = brush("poster-paint", "Poster Paint", "Painting");
@@ -771,7 +777,7 @@ static std::vector<BrushPreset> moreBrushes()
         BrushPreset& b = brush("glaze", "Glaze", "Painting");
         b.blend = BlendMode::Multiply;
         b.hardness = 0.25f; b.spacing = 0.06f; range(b, 120, 8, 900);
-        b.opacity = 0.4f; b.flow = 0.5f; b.buildup = Buildup::Max; b.pressureFlow = 0.6f; b.streamline = 0.1f;
+        b.opacity = 0.45f; b.flow = 0.75f; b.buildup = Buildup::Max; b.pressureFlow = 0.6f; b.streamline = 0.1f;
     }
     {
         BrushPreset& b = brush("stipple-brush", "Stipple Brush", "Painting");
@@ -812,7 +818,7 @@ static std::vector<BrushPreset> moreBrushes()
         b.spacing = 0.04f; range(b, 60, 6, 500);
         b.opacity = 0.8f; b.flow = 0.5f; b.wetEdges = 0.25f;
         b.pressureFlow = 0.6f; b.pressureSize = 0.25f; b.speedFlow = 0.5f;
-        setGrain(b, "cold_press", Grain::Height, 0.5f, 0.9f);
+        setGrain(b, "paper", Grain::Height, 0.45f, 0.9f);
     }
     {
         BrushPreset& b = brush("wc-splash", "Splash", "Watercolour");
@@ -822,10 +828,22 @@ static std::vector<BrushPreset> moreBrushes()
         b.sizeJitter = 0.7f; b.flowJitter = 0.3f; b.pressureSize = 0.4f;
     }
     {
-        // A soft brush on wet paper: what it touches runs into it.
+        // A broad flat brush for laying skies and grounds: one even, see-through
+        // band with the pigment pooled along its edges.
+        BrushPreset& b = brush("wc-flat", "Flat Wash", "Watercolour");
+        b.blend = BlendMode::Multiply;
+        b.hardness = 0.6f; b.roundness = 0.28f; b.angleSource = Angle::Direction; b.angle = 90;
+        b.spacing = 0.03f; range(b, 120, 12, 900);
+        b.opacity = 0.6f; b.buildup = Buildup::Max; b.wetEdges = 0.45f;
+        b.pressureFlow = 0.35f; b.pressureSize = 0.15f; b.streamline = 0.15f;
+        setGrain(b, "cold_press", Grain::Multiply, 0.22f, 1.4f);
+    }
+    {
+        // A soft brush on wet paper: what it touches runs into it, and its
+        // own colour goes down as a wash, never opaque.
         BrushPreset& b = brush("wc-wet", "Wet in Wet", "Watercolour");
         b.hardness = 0.25f; b.spacing = 0.05f; range(b, 110, 10, 800);
-        b.flow = 0.5f; b.pressureFlow = 0.5f; b.streamline = 0.1f;
+        b.opacity = 0.55f; b.flow = 0.5f; b.pressureFlow = 0.5f; b.streamline = 0.1f;
         b.wetMix = 0.9f; b.wetCharge = 0.3f;
     }
 
@@ -847,7 +865,7 @@ static std::vector<BrushPreset> moreBrushes()
         BrushPreset& b = brush("vine-charcoal", "Vine Charcoal", "Charcoals");
         b.tip = QStringLiteral("charcoal"); b.angleSource = Angle::Direction; b.angleJitter = 0.03f;
         b.spacing = 0.06f; range(b, 26, 4, 300);
-        b.flow = 0.28f; b.pressureFlow = 0.9f; b.pressureSize = 0.2f; b.tiltSize = 1.2f; b.streamline = 0.05f;
+        b.flow = 0.4f; b.pressureFlow = 0.9f; b.pressureSize = 0.2f; b.tiltSize = 1.2f; b.streamline = 0.05f;
         setGrain(b, "charcoal", Grain::Height, 0.92f, 0.5f);
     }
     {
@@ -900,10 +918,12 @@ static std::vector<BrushPreset> moreBrushes()
         b.sizeJitter = 0.8f; b.flowJitter = 0.2f; b.pressureSize = 0.3f;
     }
     {
+        // Paint flicked off the end of a brush: drops with tails, flung the
+        // way the hand moves.
         BrushPreset& b = brush("flicks", "Flicks", "Spray Paint");
-        b.tip = QStringLiteral("stipple"); b.angleJitter = 1.0f;
-        b.spacing = 1.0f; b.scatter = 1.5f; b.count = 2; range(b, 60, 8, 500);
-        b.sizeJitter = 0.8f; b.flowJitter = 0.4f;
+        b.tip = QStringLiteral("flick"); b.angleSource = Angle::Direction; b.angleJitter = 0.1f;
+        b.spacing = 0.9f; b.scatter = 1.1f; b.count = 2; range(b, 60, 8, 500);
+        b.sizeJitter = 0.7f; b.flowJitter = 0.2f; b.pressureSize = 0.3f;
     }
     {
         BrushPreset& b = brush("drizzle", "Drizzle", "Spray Paint");
@@ -951,8 +971,23 @@ static std::vector<BrushPreset> moreBrushes()
     tone("tone-hatch", "Hatch Tone", "Screentones", "hatch", Grain::Multiply, 0.8f, 0.96f).buildup = Buildup::Max;
     tone("tone-crosshatch", "Crosshatch Tone", "Screentones", "crosshatch", Grain::Multiply, 0.8f, 0.96f).buildup = Buildup::Max;
     tone("tone-waves", "Wave Tone", "Screentones", "waves", Grain::Multiply, 0.9f, 0.96f).buildup = Buildup::Max;
+    {
+        // Shading in halftone: the dots grow with pressure and shrink towards
+        // the soft edge of the stroke, as a printed gradient does.
+        BrushPreset& b = tone("tone-shade", "Halftone Shade", "Screentones", "halftone_cone", Grain::Edge, 0.8f, 0.3f);
+        b.flow = 0.6f; b.pressureFlow = 0.9f; b.buildup = Buildup::Max;
+    }
 
     // ------------------------------------------------------------- Elements
+    {
+        // A lock of fine strands that follows the hand and draws together at
+        // both ends: hair, manes, feathers' barbs, grain in a plank.
+        BrushPreset& b = brush("hair-strands", "Hair Strands", "Elements");
+        b.tip = QStringLiteral("strands"); b.angleSource = Angle::Direction;
+        b.spacing = 0.02f; range(b, 40, 6, 300);
+        b.flow = 0.85f; b.pressureFlow = 0.4f; b.pressureSize = 0.55f; b.streamline = 0.35f;
+        b.taper = 1.2f; b.taperEnd = 2.2f; b.taperTip = 0.12f;
+    }
     {
         BrushPreset& b = brush("grass", "Grass", "Elements");
         b.tip = QStringLiteral("grass"); b.angleJitter = 0.05f;
@@ -1010,9 +1045,9 @@ static std::vector<BrushPreset> moreBrushes()
     {
         // A line with a soft halo, for light drawn onto a dark ground.
         BrushPreset& b = brush("light-pen", "Light Pen", "Luminance");
-        b.blend = BlendMode::Screen;
-        b.hardness = 0.3f; b.spacing = 0.03f; range(b, 14, 2, 160);
-        b.flow = 0.9f; b.pressureSize = 0.85f; b.pressureGamma = 1.2f; b.streamline = 0.4f;
+        b.blend = BlendMode::Add;
+        b.tip = QStringLiteral("glow"); b.spacing = 0.03f; range(b, 24, 3, 200);
+        b.flow = 0.6f; b.pressureSize = 0.8f; b.pressureFlow = 0.3f; b.pressureGamma = 1.2f; b.streamline = 0.4f;
         b.taper = 0.5f; b.taperEnd = 0.8f;
     }
     {
@@ -1047,7 +1082,7 @@ static std::vector<BrushPreset> moreBrushes()
         b.blend = BlendMode::Screen;
         b.tip = QStringLiteral("smoke"); b.angleJitter = 1.0f;
         b.spacing = 0.15f; b.scatter = 0.2f; range(b, 260, 30, 1200);
-        b.flow = 0.16f; b.pressureFlow = 0.8f; b.sizeJitter = 0.3f; b.hueJitter = 0.12f; b.satJitter = 0.15f;
+        b.flow = 0.28f; b.pressureFlow = 0.8f; b.sizeJitter = 0.3f; b.hueJitter = 0.12f; b.satJitter = 0.15f;
     }
 
     // ------------------------------------------------------------- Abstract
@@ -1098,10 +1133,10 @@ BrushLibrary::BrushLibrary()
         b.spacing = 0.07f;
         b.size = 9; b.minSize = 1; b.maxSize = 80;
         b.flow = 0.3f;
-        b.pressureFlow = 0.97f; b.pressureSize = 0.3f; b.pressureGamma = 1.6f;
+        b.pressureFlow = 0.97f; b.pressureSize = 0.3f; b.pressureGamma = 1.35f;
         b.tiltSize = 2.2f; b.tiltFlow = 0.45f;
         b.streamline = 0.05f;
-        setGrain(b, "fine", Grain::Height, 0.75f, 0.8f);
+        setGrain(b, "paper", Grain::Height, 0.78f, 0.6f);
         add(b);
     }
     {
@@ -1110,10 +1145,10 @@ BrushLibrary::BrushLibrary()
         b.spacing = 0.07f;
         b.size = 4.5f; b.minSize = 1; b.maxSize = 40;
         b.flow = 0.2f;
-        b.pressureFlow = 0.97f; b.pressureSize = 0.2f; b.pressureGamma = 1.6f;
+        b.pressureFlow = 0.97f; b.pressureSize = 0.2f; b.pressureGamma = 1.3f;
         b.tiltSize = 1.6f; b.tiltFlow = 0.4f;
         b.streamline = 0.05f;
-        setGrain(b, "fine", Grain::Height, 0.85f, 0.6f);
+        setGrain(b, "fine", Grain::Height, 0.8f, 0.6f);
         add(b);
     }
     {
@@ -1121,10 +1156,11 @@ BrushLibrary::BrushLibrary()
         b.hardness = 0.85f;
         b.spacing = 0.06f;
         b.size = 2.5f; b.minSize = 0.5f; b.maxSize = 20;
-        b.flow = 0.5f;
-        b.pressureFlow = 0.6f; b.pressureSize = 0.25f;
+        b.flow = 0.4f;
+        b.pressureFlow = 0.75f; b.pressureSize = 0.2f; b.pressureGamma = 1.2f;
+        b.tiltSize = 0.8f;
         b.streamline = 0.2f;
-        setGrain(b, "fine", Grain::Height, 0.3f, 0.5f);
+        setGrain(b, "fine", Grain::Height, 0.55f, 0.5f);
         add(b);
     }
     {
@@ -1257,7 +1293,9 @@ BrushLibrary::BrushLibrary()
         b.angle = 50;
         b.spacing = 0.04f;
         b.size = 32; b.minSize = 4; b.maxSize = 240;
-        b.opacity = 0.65f;
+        // A dye marker: see-through, darker where strokes cross, never chalky over colour.
+        b.blend = BlendMode::Multiply;
+        b.opacity = 0.7f;
         b.buildup = Buildup::Max;
         b.pressureSize = 0.15f;
         b.streamline = 0.2f;
@@ -1327,7 +1365,7 @@ BrushLibrary::BrushLibrary()
         b.flow = 0.95f;
         b.pressureSize = 0.45f; b.pressureFlow = 0.35f;
         b.streamline = 0.1f;
-        setGrain(b, "fine", Grain::Multiply, 0.14f, 0.8f);
+        setGrain(b, "fine", Grain::Multiply, 0.07f, 0.8f);
         add(b);
     }
     {
@@ -1346,6 +1384,7 @@ BrushLibrary::BrushLibrary()
         // A round watercolour brush: an even wash within one stroke, darker
         // where pigment pools at the rim, and deeper where strokes overlap.
         BrushPreset b = make("watercolor-round", "Watercolour Round", "Watercolour");
+        b.blend = BlendMode::Multiply;   // a wash over colour darkens it, as pigment in water does
         b.hardness = 0.78f;
         b.spacing = 0.05f;
         b.size = 70; b.minSize = 4; b.maxSize = 600;
@@ -1397,7 +1436,7 @@ BrushLibrary::BrushLibrary()
     }
     {
         BrushPreset b = make("airbrush-hard", "Hard Airbrush", "Airbrushing");
-        b.hardness = 0.8f;
+        b.hardness = 0.9f;
         b.spacing = 0.05f;
         b.size = 60; b.minSize = 2; b.maxSize = 800;
         b.flow = 0.3f;

@@ -252,7 +252,8 @@ void DabRenderer::paint(StrokeBuffer& target, const std::vector<Dab>& dabs, cons
 
 void DabRenderer::smudge(gfx::Texture& live, gfx::Texture& scratch, const std::vector<Dab>& dabs,
                          const BrushPreset& preset, float strength, QPointF& lastPos, bool& hasLast,
-                         const gfx::Texture* selection, const gfx::Texture* lockedLayer, float charge, float pull)
+                         const gfx::Texture* selection, const gfx::Texture* lockedLayer, float charge, float pull,
+                         const gfx::Texture* before, float ceiling)
 {
     if (dabs.empty())
         return;
@@ -278,6 +279,10 @@ void DabRenderer::smudge(gfx::Texture& live, gfx::Texture& scratch, const std::v
     (lockedLayer ? *lockedLayer : scratch).bind(3);
     m_smudge.set("uLayer", 3);
     m_smudge.set("uAlphaLock", lockedLayer ? 1 : 0);
+    (before ? *before : scratch).bind(4);
+    m_smudge.set("uBefore", 4);
+    m_smudge.set("uCeiling", before ? std::clamp(ceiling, 0.0f, 1.0f) : 1.0f);
+    m_smudge.set("uCharge", std::clamp(charge, 0.0f, 1.0f));
 
     upload(dabs);
     f->glBindVertexArray(m_vao);
@@ -294,13 +299,11 @@ void DabRenderer::smudge(gfx::Texture& live, gfx::Texture& scratch, const std::v
         const QPointF delta = cur - lastPos;
         lastPos = cur;
         // Charge is what one pass of the brush leaves of its own paint. A
-        // point is under the brush for about one diameter of travel, so each
-        // dab lays the share that this step is of that.
+        // point is under the brush for about two thirds of a diameter of
+        // travel, so each dab lays the share that this step is of that.
         const float travelled = float(std::hypot(delta.x(), delta.y())) / std::max(d.size, 1.0f);
-        const float perDab = charge >= 0.999f ? 1.0f
-                             : travelled <= 0.0f ? charge
-                                                 : 1.0f - std::pow(1.0f - charge, std::min(1.0f, travelled * 1.5f));
-        m_smudge.set("uCharge", charge > 0.0f ? perDab : 0.0f);
+        const float perPass = charge >= 0.999f ? 12.0f : -std::log(1.0f - std::clamp(charge, 0.0f, 0.999f));
+        m_smudge.set("uChargeRate", charge >= 0.999f || travelled <= 0.0f ? perPass : perPass * std::min(1.0f, travelled * 1.5f));
         const QRect dst = dabBounds(d) & canvas;
         if (dst.isEmpty())
             continue;

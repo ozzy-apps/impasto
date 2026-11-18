@@ -5,3 +5,6 @@
 /dist/
 /.flatpak-builder/
 *.AppImage
+
+# Brush review pages and other local renders
+/out/

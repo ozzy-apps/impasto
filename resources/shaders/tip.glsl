@@ -6,6 +6,7 @@ uniform sampler2D uTip;
 in vec2 vUv;              // dab-local, the tip edge sits at length 1
 in vec2 vLocalPx;
 in float vCoverage;
+in vec2 vRadii;
 
 // A dab is split into two parts. `profile` is how much paint it lays down
 // across the tip and builds up from dab to dab. `edge` is the antialiased
@@ -14,8 +15,11 @@ in float vCoverage;
 void tipSample(out float profile, out float edge)
 {
     if (uTipMode == 0) {
+        // How fast d grows per pixel, from the tip's own shape rather than
+        // from screen derivatives: those are shared by 2x2 pixel blocks and
+        // leave a checkerboard in thin or squashed dabs.
         float d = length(vUv);
-        float aa = max(fwidth(d), 1e-4);
+        float aa = d > 1e-4 ? length(vUv / (vRadii * d)) : 1.0 / min(vRadii.x, vRadii.y);
         float outer = 1.0 + 0.5 * aa;
         float t = clamp((outer - d) / max(1.0 - uHardness, 1e-3), 0.0, 1.0);
         profile = t * t * (3.0 - 2.0 * t);

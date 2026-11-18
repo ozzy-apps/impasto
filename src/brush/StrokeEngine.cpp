@@ -49,6 +49,26 @@ float StrokeEngine::rand01()
     return float(m_rng & 0xffffffu) / float(0x1000000);
 }
 
+// Smooth noise along the stroke, -1..1: a fresh value every unit of `t`,
+// eased from one to the next. The same stroke gives the same values.
+float StrokeEngine::wander(float t, uint32_t channel) const
+{
+    auto at = [&](int64_t k) {
+        uint32_t h = uint32_t(k) * 2654435761u ^ (m_rngStart + channel * 0x9e3779b9u);
+        h ^= h >> 15;
+        h *= 2246822519u;
+        h ^= h >> 13;
+        h *= 3266489917u;
+        h ^= h >> 16;
+        return float(h & 0xffffffu) / float(0x800000) - 1.0f;
+    };
+    const float cell = std::floor(t);
+    const float f = t - cell;
+    const float e = f * f * (3.0f - 2.0f * f);
+    const int64_t k = int64_t(cell);
+    return at(k) + (at(k + 1) - at(k)) * e;
+}
+
 float StrokeEngine::nextSpacing() const
 {
     const float fraction = m_spacingOverride > 0.0f ? m_spacingOverride : m_preset.spacing;
@@ -264,7 +284,13 @@ void StrokeEngine::renderSegment(size_t i)
         const double len = std::hypot(d.x(), d.y());
         if (len > 1e-6) {
             const QPointF unit = d / len;
-            m_dir = m_haveDir ? m_dir * 0.6 + unit * 0.4 : unit;
+            // The heading follows the path over about a third of a diameter,
+            // so a hand's small tremor does not set a long tip wagging (it
+            // would saw the edges of a flat brush), while a turn still turns it.
+            const double follow = 1.0 - std::exp(-len / std::max(2.0, double(m_size) * 0.3));
+            m_dir = m_haveDir ? m_dir + (unit - m_dir) * follow : unit;
+            const double dl = std::hypot(m_dir.x(), m_dir.y());
+            m_dir = dl > 1e-9 ? m_dir / dl : unit;
             m_haveDir = true;
             const float direction = float(std::atan2(m_dir.y(), m_dir.x()));
 
@@ -355,10 +381,16 @@ void StrokeEngine::emitDab(const Node& n, float direction, double travel)
         d.size = s;
         d.angle = angle;
         if (b.hueJitter > 0.0f || b.satJitter > 0.0f || b.valJitter > 0.0f) {
-            float h = m_hsv[0] + randSigned() * b.hueJitter * 0.5f;
+            // Dabs that lie almost on top of each other would each show as a
+            // disc of their own colour, beading the stroke: there the colour
+            // wanders smoothly along it instead, about once a diameter.
+            const bool smoothColour = count == 1 && b.scatter < 0.5f && b.spacing < 0.15f;
+            const float along = float(travel / double(std::max(m_size, 1.0f)));
+            auto vary = [&](uint32_t channel) { return smoothColour ? wander(along, channel) : randSigned(); };
+            float h = m_hsv[0] + vary(1) * b.hueJitter * 0.5f;
             h -= std::floor(h);
-            const float sa = std::clamp(m_hsv[1] + randSigned() * b.satJitter, 0.0f, 1.0f);
-            const float va = std::clamp(m_hsv[2] + randSigned() * b.valJitter, 0.0f, 1.0f);
+            const float sa = std::clamp(m_hsv[1] + vary(2) * b.satJitter, 0.0f, 1.0f);
+            const float va = std::clamp(m_hsv[2] + vary(3) * b.valJitter, 0.0f, 1.0f);
             const QColor c2 = QColor::fromHsvF(h, sa, va);
             d.r = c2.redF();
             d.g = c2.greenF();

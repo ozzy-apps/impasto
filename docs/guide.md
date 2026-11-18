@@ -119,11 +119,15 @@ that script for what it needs).
   into exported pictures. When memory does run short, the working copies kept
   for speed go first, then the oldest undo steps (with a notice), and paint
   that still does not fit is refused with the reason rather than lost.
-- **Brushes**: 119 presets in fourteen sets: sketching, inking, drawing,
-  calligraphy, painting, watercolour, airbrushing, charcoals, spray paint,
-  textures, screentones, elements (grass, fur, clouds, smoke, rain, snow),
-  luminance and abstract. They are made of 30 tip shapes and 21 grains, all
-  worked out at start-up, so nothing binary ships. Pressure and tilt
+- **Brushes**: 122 presets in fourteen sets: sketching, inking, drawing,
+  calligraphy, painting, watercolour (with a Flat Wash for skies and
+  grounds), airbrushing, charcoals, spray paint, textures, screentones (with
+  Halftone Shade, whose dots grow with pressure), elements (grass, fur, hair
+  strands, clouds, smoke, rain, snow), luminance and abstract. They are made
+  of 32 tip shapes and 23 grains, all worked out at start-up, so nothing
+  binary ships. Paper grains are spread evenly over their range, so pencils,
+  chalks and charcoals shade smoothly from a light touch to full pressure,
+  and the deepest pits of the tooth stay open as real paper's do. Pressure and tilt
   dynamics, StreamLine stabilisation, shaped tips, paper grain, wet edges,
   colour jitter. Paint, smudge and erase each remember their own brush, size
   and opacity. Rest on a brush in the library for a moment to pick it up and
@@ -132,8 +136,10 @@ that script for what it needs).
   (Multiply for markers and washes, Add and Screen for light), which decides
   how its paint meets what is already on the layer. A wet brush drags that
   paint along and mixes it into its own: *Pull* is how far, *Charge* how much
-  of its own paint a pass leaves. Wet Oil, Wet Acrylic, Blender and Wet in Wet
-  are set up that way.
+  of its own paint a pass leaves (none at all: it only blends, as the Blender
+  does). Its own paint is never more opaque than the stroke opacity, however
+  often the stroke crosses itself. Wet Oil, Wet Acrylic, Blender and Wet in
+  Wet are set up that way.
 - **Colours**: five pages in one panel. *Disc* and *Classic* (a square of
   saturation and brightness) choose a colour by eye. *Harmony* shows the
   colours that go with it on a wheel (complementary, split complementary,
@@ -550,7 +556,10 @@ text: no command has to say so, and anything that changes the pixels ends it.
 
 A wet brush runs through the smudge path instead of the stroke buffer: each
 dab moves what lies a step behind it forward, then lays the brush's own
-colour over that, a share of it sized so that one pass leaves the charge.
+colour over that, a share of it sized so that one pass leaves the charge
+(more where a bristle of the tip is laden, less where it is dry). That colour
+is first laid over the layer as the stroke found it, at the stroke opacity,
+so a stroke that crosses itself does not build up past that.
 
 A palette taken from a picture starts from pixels sampled on an even grid.
 They are split into groups in Oklab, where distances match how different two
@@ -597,6 +606,7 @@ The binary can exercise itself without a window on screen:
 ./build/impasto --ui-shot shots/ui      # the real UI driven by a simulated pen and mouse
 ./build/impasto --brush-sheet sheet.png # every brush preview
 ./build/impasto --brush-showcase out.png [brush-id ...]   # strokes at working size on paper
+./build/impasto --brush-review out/brush-review [set ...] # a page per set: pressure ramps, slow and fast, small, light on colour; plus every tip and grain
 ./build/impasto --bench                 # stroke, shape, fill and selection cost at 1440p, 4K and 8K
 ./build/impasto --bench 8000x8000       # the same for one size of your choosing
 IMPASTO_NO_SPARSE=1 ./build/impasto         # store every layer whole, as on a card without sparse textures

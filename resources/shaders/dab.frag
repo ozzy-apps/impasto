@@ -22,7 +22,7 @@ void main()
         if (uGrainMode == 1) {
             a *= mix(1.0, g, uGrainDepth);
         } else {
-            float th = (1.0 - a * (uGrainMode == 3 ? 1.4 : 1.0)) * uGrainDepth;
+            float th = (1.0 - a * (uGrainMode == 3 ? 1.4 : 0.82)) * uGrainDepth;
             float soft = uGrainMode == 3 ? 0.09 : 0.25;
             a *= smoothstep(th - soft, th + soft, g);
         }

@@ -46,11 +46,13 @@ public:
     // `selection` limits where it may act; `lockedLayer` (the layer before the
     // stroke) switches on alpha lock, smearing colour without touching alpha.
     // With `charge` above zero the dabs bring paint of their own (their
-    // colour), mixed with what they pick up `pull` of a step behind them.
+    // colour), mixed with what they pick up `pull` of a step behind them;
+    // that paint goes over `before` (the layer as the stroke found it) and is
+    // at most `ceiling` opaque.
     void smudge(gfx::Texture& live, gfx::Texture& scratch, const std::vector<Dab>& dabs,
                 const BrushPreset& preset, float strength, QPointF& lastPos, bool& hasLast,
                 const gfx::Texture* selection = nullptr, const gfx::Texture* lockedLayer = nullptr,
-                float charge = 0.0f, float pull = 1.0f);
+                float charge = 0.0f, float pull = 1.0f, const gfx::Texture* before = nullptr, float ceiling = 1.0f);
 
     // Sets the uGrain* uniforms and binds the grain texture. Grain either rides
     // along with each dab (`moving`) or is fixed to the canvas, and only the

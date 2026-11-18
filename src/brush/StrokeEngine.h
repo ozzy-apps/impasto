@@ -85,6 +85,7 @@ private:
     void emitDab(const Node& n, float direction, double travel);
     float nextSpacing() const;
     float rand01();
+    float wander(float t, uint32_t channel) const;
     float randSigned() { return rand01() * 2.0f - 1.0f; }
 
     BrushPreset m_preset;
