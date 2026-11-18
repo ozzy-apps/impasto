@@ -138,6 +138,10 @@ const QHash<QString, QString>& iconBodies()
                         "<circle cx='4.800' cy='12' r='.900' fill='currentColor'/><circle cx='4.800' cy='17' r='.900' fill='currentColor'/>")},
         {QStringLiteral("pad"),
          QStringLiteral("<path d='M4 17c2.500-6 4.500 2 7-3s3.500-7 9-8'/><path d='M4 20.500h16'/>")},
+        {QStringLiteral("portrait"), QStringLiteral("<rect x='7' y='3.500' width='10' height='17' rx='1.800'/>")},
+        {QStringLiteral("landscape"), QStringLiteral("<rect x='3.500' y='7' width='17' height='10' rx='1.800'/>")},
+        {QStringLiteral("unlock"),
+         QStringLiteral("<rect x='5.500' y='11' width='13' height='9.500' rx='2'/><path d='M8.500 11V8a3.500 3.500 0 0 1 6.800-1.200'/>")},
         {QStringLiteral("link"),
          QStringLiteral("<path d='M10 13.500a4 4 0 0 0 5.700 0l3-3a4 4 0 0 0-5.700-5.700l-1 1'/>"
                         "<path d='M14 10.500a4 4 0 0 0-5.700 0l-3 3a4 4 0 0 0 5.700 5.700l1-1'/>")},

@@ -5952,6 +5952,312 @@ static bool runInvokeUi(MainWindow& window, CanvasEngine& engine, const std::fun
     return ok;
 }
 
+// New Canvas: a size on paper at a resolution and what this card has room for,
+// set with the pen. The dialog is its own window, so the pen enters there.
+static bool runNewCanvasUi(const QString& outPrefix, const std::function<void()>& settle)
+{
+    QStringList log;
+    bool ok = true;
+    auto check = [&](const QString& what, bool passed) {
+        ok = ok && passed;
+        log << QStringLiteral("%1 %2").arg(passed ? "ok    " : "FAILED", what);
+    };
+    NewCanvasDialog dlg(QSize(2560, 1440));
+    dlg.setAttribute(Qt::WA_DontShowOnScreen);
+    dlg.setCurrentColour(QColor(200, 60, 70));
+    dlg.show();
+    settle();
+    const qint64 limit = CanvasEngine::maxCanvasPixels();
+
+    QPointingDevice stylus(QStringLiteral("canvas stylus"), 4343, QInputDevice::DeviceType::Stylus, QPointingDevice::PointerType::Pen,
+                           QInputDevice::Capability::Position | QInputDevice::Capability::Pressure, 1, 3);
+    QWindow* handle = dlg.windowHandle();
+    auto pen = [&](QEvent::Type t, const QPointF& pos, qreal pressure, Qt::MouseButton b, Qt::MouseButtons held,
+                   Qt::KeyboardModifiers mods = Qt::NoModifier) {
+        const QPointF global = handle->mapToGlobal(pos);
+        QTabletEvent ev(t, &stylus, pos, global, pressure, 0.0f, 0.0f, 0.0f, 0.0, 0.0f, mods, b, held);
+        ev.setAccepted(false);
+        QCoreApplication::sendEvent(handle, &ev);
+        if (ev.isAccepted())
+            return;
+        const QEvent::Type mt = t == QEvent::TabletPress ? QEvent::MouseButtonPress : t == QEvent::TabletRelease ? QEvent::MouseButtonRelease : QEvent::MouseMove;
+        QMouseEvent me(mt, pos, global, b, held, mods);
+        QCoreApplication::sendEvent(handle, &me);
+    };
+    auto at = [&](QWidget* w, const QPointF& local) { return QPointF(w->mapTo(&dlg, local.toPoint())); };
+    // A tap from a resting pen, which wanders a few pixels while it is down.
+    auto tap = [&](QWidget* w, const QPointF& local) {
+        const QPointF p = at(w, local);
+        pen(QEvent::TabletMove, p, 0.0, Qt::NoButton, Qt::NoButton);
+        pen(QEvent::TabletPress, p, 0.4, Qt::LeftButton, Qt::LeftButton);
+        pen(QEvent::TabletMove, p + QPointF(1.5, 0.5), 0.5, Qt::NoButton, Qt::LeftButton);
+        pen(QEvent::TabletMove, p + QPointF(-2.5, 1.0), 0.5, Qt::NoButton, Qt::LeftButton);
+        pen(QEvent::TabletRelease, p + QPointF(-2.0, 1.0), 0.0, Qt::LeftButton, Qt::NoButton);
+        settle();
+    };
+    auto drag = [&](QWidget* w, const QPointF& local, const QPointF& by, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+        const QPointF p = at(w, local);
+        pen(QEvent::TabletMove, p, 0.0, Qt::NoButton, Qt::NoButton, mods);
+        pen(QEvent::TabletPress, p, 0.5, Qt::LeftButton, Qt::LeftButton, mods);
+        const int steps = std::max(4, int(std::hypot(by.x(), by.y()) / 8));
+        for (int i = 1; i <= steps; ++i)
+            pen(QEvent::TabletMove, p + by * (double(i) / steps), 0.6, Qt::NoButton, Qt::LeftButton, mods);
+        pen(QEvent::TabletRelease, p + by, 0.0, Qt::LeftButton, Qt::NoButton, mods);
+        settle();
+    };
+    auto centre = [](QWidget* w) { return QPointF(w->width() / 2.0, w->height() / 2.0); };
+    auto key = [&](QWidget* to, int k, const QString& text = QString()) {
+        QKeyEvent press(QEvent::KeyPress, k, Qt::NoModifier, text);
+        QCoreApplication::sendEvent(to, &press);
+        QKeyEvent release(QEvent::KeyRelease, k, Qt::NoModifier, text);
+        QCoreApplication::sendEvent(to, &release);
+    };
+    auto type = [&](QWidget* to, const QString& text) {
+        for (const QChar c : text)
+            key(to, c.isDigit() ? Qt::Key_0 + c.digitValue() : c == QLatin1Char(',') ? Qt::Key_Comma : Qt::Key_Period, QString(c));
+    };
+
+    auto* width = dlg.findChild<ValueField*>(QStringLiteral("canvas-width"));
+    auto* height = dlg.findChild<ValueField*>(QStringLiteral("canvas-height"));
+    auto* dpi = dlg.findChild<ValueField*>(QStringLiteral("canvas-dpi"));
+    auto* lock = dlg.findChild<QAbstractButton*>(QStringLiteral("canvas-lock"));
+    auto* aspect = dlg.findChild<SegmentBar*>(QStringLiteral("canvas-aspect"));
+    auto* unitBar = dlg.findChild<SegmentBar*>(QStringLiteral("canvas-unit"));
+    auto* background = dlg.findChild<SegmentBar*>(QStringLiteral("canvas-background"));
+    auto* portrait = dlg.findChild<IconButton*>(QStringLiteral("canvas-portrait"));
+    auto* landscape = dlg.findChild<IconButton*>(QStringLiteral("canvas-landscape"));
+    auto* list = dlg.findChild<QWidget*>(QStringLiteral("canvas-presets"));
+    auto* scroll = dlg.findChild<QScrollArea*>(QStringLiteral("canvas-presets-scroll"));
+    auto* preview = dlg.findChild<QWidget*>(QStringLiteral("canvas-preview"));
+    auto* create = dlg.findChild<QPushButton*>(QStringLiteral("canvas-create"));
+    if (!width || !height || !dpi || !lock || !aspect || !unitBar || !background || !portrait || !landscape || !list || !scroll || !preview || !create) {
+        qInfo().noquote() << "canvas: FAILED the dialog's controls are missing";
+        return false;
+    }
+    auto* widthEdit = width->findChild<QLineEdit*>(QStringLiteral("value-edit"));
+    auto* heightEdit = height->findChild<QLineEdit*>(QStringLiteral("value-edit"));
+
+    // Wide and short: it fits a 1920 × 1080 screen with room to spare.
+    const QSize hint = dlg.sizeHint();
+    check(QStringLiteral("new canvas fits the screen: %1 × %2, three columns").arg(hint.width()).arg(hint.height()),
+          hint.width() <= 1200 && hint.height() <= 720 && list->isVisible() && width->isVisible() && preview->isVisible());
+    dlg.resize(hint);
+    settle();
+    dlg.grab().save(QStringLiteral("%1-new-canvas.png").arg(outPrefix));
+
+    // ---- What the old dialog already did, through the same calls.
+    dlg.setUnit(NewCanvasDialog::Pixels);
+    dlg.setResolution(300);
+    dlg.setSize(2480, 3508);
+    const bool a4 = dlg.pixelSize() == QSize(2480, 3508) && dlg.presetText(dlg.currentPreset()).startsWith(QLatin1String("A4")) && dlg.fits()
+                    && dlg.roomText().contains(QStringLiteral("21 × 29.7 cm at 300 dpi")) && portrait->isActive() && !landscape->isActive();
+    dlg.setUnit(NewCanvasDialog::Centimetres);
+    const bool inCm = std::abs(dlg.shownWidth() - 21.0) < 0.01 && std::abs(dlg.shownHeight() - 29.7) < 0.01 && dlg.pixelSize() == QSize(2480, 3508)
+                      && width->shownText() == QStringLiteral("21 cm") && unitBar->current() == NewCanvasDialog::Centimetres;
+    dlg.setResolution(150);
+    const bool coarser = dlg.pixelSize() == QSize(1240, 1754) && std::abs(dlg.shownWidth() - 21.0) < 0.01;
+    check(QStringLiteral("A4 is 2480 × 3508 px at 300 dpi, shows as 21 × 29.7 cm, and is 1240 × 1754 px at 150 dpi"), a4 && inCm && coarser);
+
+    dlg.setSize(100.0, 100.0);
+    const bool poster = dlg.pixelSize() == QSize(5906, 5906) && dlg.fits() && dlg.presetText(dlg.currentPreset()).startsWith(QLatin1String("1 m square"));
+    dlg.setResolution(300);
+    const QSize metre = dlg.pixelSize();
+    const bool metreFits = qint64(metre.width()) * metre.height() <= limit;
+    const int finest = NewCanvasDialog::finestResolution(100.0 / 2.54, 100.0 / 2.54);
+    const double atFinest = 100.0 / 2.54 * finest, pastFinest = 100.0 / 2.54 * (finest + 1);
+    const bool honest = metre == QSize(11811, 11811) && dlg.fits() == metreFits
+                        && (metreFits || dlg.roomText().contains(QStringLiteral("fits at up to %1 dpi").arg(finest)))
+                        && atFinest * atFinest <= double(limit) && (pastFinest * pastFinest > double(limit) || pastFinest > CanvasEngine::maxCanvasDimension())
+                        && create->isEnabled() == metreFits;
+    dlg.accept();
+    const bool refused = metreFits || (dlg.result() != QDialog::Accepted && dlg.isVisible());
+    check(QStringLiteral("1 m × 1 m is 5906 px a side at 150 dpi; at 300 dpi it is 11811 px a side, which %1 here (fits at up to %2 dpi; Create %3)")
+              .arg(metreFits ? QStringLiteral("fits") : QStringLiteral("is refused with the reason"))
+              .arg(finest)
+              .arg(create->isEnabled() ? QStringLiteral("on") : QStringLiteral("off")),
+          poster && honest && refused);
+    if (!poster || !honest)
+        qInfo().noquote() << "canvas: 1 m" << poster << honest << metre << dlg.fits() << metreFits << create->isEnabled() << dlg.presetText(dlg.currentPreset());
+    dlg.setResult(0);
+    dlg.show();   // where a metre at 300 dpi fits, it was created
+    settle();
+
+    // ---- With the pen. A preset from the list.
+    dlg.setUnit(NewCanvasDialog::Pixels);
+    dlg.setResolution(300);
+    dlg.setSize(1000, 1000);
+    scroll->verticalScrollBar()->setValue(0);
+    settle();
+    int a4Index = -1;
+    for (int i = 0; i < dlg.presetCount(); ++i)
+        if (dlg.presetText(i).startsWith(QLatin1String("A4")))
+            a4Index = i;
+    // Rows: headings are 28 high (34 after the first), presets 46. A4 is the first under the third heading.
+    const int a4Top = 28 + 3 * 46 + 34 + 2 * 46 + 34;
+    tap(list, QPointF(120, a4Top + 23));
+    check(QStringLiteral("tap A4 in the list: %1 × %2 px, shown in mm, portrait").arg(dlg.pixelSize().width()).arg(dlg.pixelSize().height()),
+          dlg.currentPreset() == a4Index && dlg.pixelSize() == QSize(2480, 3508) && dlg.unit() == NewCanvasDialog::Millimetres && portrait->isActive());
+
+    // Turned: still A4, the other way up.
+    tap(landscape, centre(landscape));
+    const bool turned = dlg.pixelSize() == QSize(3508, 2480) && dlg.currentPreset() == a4Index && landscape->isActive() && !portrait->isActive()
+                        && std::abs(dlg.shownWidth() - 297.0) < 0.06 && std::abs(dlg.shownHeight() - 210.0) < 0.06;
+    dlg.grab().save(QStringLiteral("%1-new-canvas-landscape.png").arg(outPrefix));
+    tap(landscape, centre(landscape));
+    const bool again = dlg.pixelSize() == QSize(3508, 2480);
+    tap(portrait, centre(portrait));
+    check(QStringLiteral("Landscape turns A4 to 297 × 210 mm and it stays A4; Landscape again leaves it; Portrait turns it back"),
+          turned && again && dlg.pixelSize() == QSize(2480, 3508) && portrait->isActive());
+
+    // The list scrolls with a pen drag, and the last preset is reachable.
+    drag(list, QPointF(120, 300), QPointF(0, -400));
+    const int scrolled = scroll->verticalScrollBar()->value();
+    const QPoint lastInView = list->mapTo(scroll->viewport(), QPoint(120, list->height() - 30));
+    tap(list, QPointF(120, list->height() - 30));
+    const QSize largest = dlg.pixelSize();
+    const bool largestOk = dlg.currentPreset() == dlg.presetCount() - 1 && dlg.fits() && dlg.unit() == NewCanvasDialog::Pixels && largest.width() == largest.height()
+                           && qint64(largest.width() + 1) * (largest.width() + 1) > limit;
+    dlg.setUnit(NewCanvasDialog::Inches);
+    const bool inInches = std::abs(dlg.shownWidth() - largest.width() / 300.0) < 0.001 && dlg.pixelSize() == largest;
+    check(QStringLiteral("drag the list up (scrolled %1 px), tap the last row: the largest square this card holds, %2 px a side, %3 cm at 300 dpi")
+              .arg(scrolled)
+              .arg(largest.width())
+              .arg(largest.width() / 300.0 * 2.54, 0, 'f', 1),
+          scrolled > 0 && scroll->viewport()->rect().contains(lastInView) && largestOk && inInches);
+    scroll->verticalScrollBar()->setValue(0);
+
+    // ---- Drag in a field: right is more, further is faster, it lands on a multiple of 8.
+    dlg.setUnit(NewCanvasDialog::Pixels);
+    dlg.setSize(2000, 1500);
+    drag(width, centre(width), QPointF(60, 0));
+    const int short_ = dlg.pixelSize().width() - 2000;
+    dlg.setSize(2000, 1500);
+    drag(width, centre(width), QPointF(240, 0));
+    const int long_ = dlg.pixelSize().width() - 2000;
+    const bool dragged = short_ > 100 && long_ > 4 * short_ && dlg.pixelSize().width() % 8 == 0 && dlg.pixelSize().height() == 1500
+                         && !width->isEditing() && dlg.currentPreset() == dlg.presetCount();
+    drag(width, centre(width), QPointF(-240, 0));
+    const bool back = dlg.pixelSize().width() == 2000;
+    // Shift: fine steps, to the pixel.
+    dlg.setSize(2000, 1500);
+    drag(height, centre(height), QPointF(-40, 0), Qt::ShiftModifier);
+    const int fine = 1500 - dlg.pixelSize().height();
+    check(QStringLiteral("drag Width 60 px right: +%1; 240 px: +%2, on a multiple of 8; back again to 2000; Shift-drag Height 40 px left: -%3")
+              .arg(short_).arg(long_).arg(fine),
+          dragged && back && fine > 0 && fine < 40);
+
+    // Both ends of the range.
+    drag(width, centre(width), QPointF(2000, 0));
+    const int widest = dlg.pixelSize().width();
+    drag(width, centre(width), QPointF(-4000, 0));
+    const int narrowest = dlg.pixelSize().width();
+    drag(width, centre(width), QPointF(2000, 0));
+    drag(height, centre(height), QPointF(2000, 0));
+    const bool tooBig = !dlg.fits() == (qint64(widest) * dlg.pixelSize().height() > limit) && create->isEnabled() == dlg.fits();
+    dlg.grab().save(QStringLiteral("%1-new-canvas-largest.png").arg(outPrefix));
+    check(QStringLiteral("dragged to the ends: %1 px to %2 px; both sides at the most: %3, Create %4")
+              .arg(narrowest).arg(widest)
+              .arg(dlg.fits() ? QStringLiteral("fits") : QStringLiteral("too large, said in orange"))
+              .arg(create->isEnabled() ? QStringLiteral("on") : QStringLiteral("off")),
+          widest == CanvasEngine::maxCanvasDimension() && narrowest == 16 && tooBig);
+
+    // ---- A tap types instead; Enter takes the number and does not create; Escape leaves the typing only.
+    dlg.setSize(2000, 1500);
+    tap(height, centre(height));
+    const bool typing = height->isEditing() && heightEdit && heightEdit->isVisible() && heightEdit->selectedText() == QStringLiteral("1500");
+    dlg.grab().save(QStringLiteral("%1-new-canvas-typing.png").arg(outPrefix));
+    key(heightEdit, Qt::Key_Backspace);
+    type(heightEdit, QStringLiteral("1234"));
+    key(heightEdit, Qt::Key_Return);
+    settle();
+    const bool typed = !height->isEditing() && dlg.pixelSize() == QSize(2000, 1234) && dlg.isVisible() && dlg.result() != QDialog::Accepted;
+    tap(width, centre(width));
+    type(widthEdit, QStringLiteral("99"));
+    key(widthEdit, Qt::Key_Escape);
+    settle();
+    const bool escaped = !width->isEditing() && dlg.pixelSize().width() == 2000 && dlg.isVisible();
+    // Typing into a field with the keyboard starts writing it.
+    key(width, Qt::Key_3, QStringLiteral("3"));
+    type(widthEdit, QStringLiteral("000"));
+    key(widthEdit, Qt::Key_Enter);
+    settle();
+    const bool fromKeys = dlg.pixelSize().width() == 3000;
+    check(QStringLiteral("tap Height to type 1234, Enter takes it without creating; Escape drops what was typed; typing into Width starts writing it (3000)"),
+          typing && typed && escaped && fromKeys);
+    // Centimetres take a comma or a point.
+    dlg.setUnit(NewCanvasDialog::Centimetres);
+    tap(width, centre(width));
+    key(widthEdit, Qt::Key_Backspace);
+    type(widthEdit, QStringLiteral("21,5"));
+    key(widthEdit, Qt::Key_Return);
+    settle();
+    check(QStringLiteral("21,5 typed in centimetres is 21.5 cm, %1 px at 300 dpi").arg(dlg.pixelSize().width()),
+          std::abs(dlg.shownWidth() - 21.5) < 0.001 && dlg.pixelSize().width() == 2539);
+
+    // ---- The shape kept, and shapes to choose.
+    dlg.setUnit(NewCanvasDialog::Pixels);
+    dlg.setSize(2000, 1000);
+    tap(lock, centre(lock));
+    drag(width, centre(width), QPointF(120, 0));
+    const QSize locked = dlg.pixelSize();
+    tap(lock, centre(lock));
+    check(QStringLiteral("tap the lock, drag Width: the height follows, %1 × %2; tap it again to free it").arg(locked.width()).arg(locked.height()),
+          locked.width() > 2000 && std::abs(locked.width() - 2 * locked.height()) <= 1 && !dlg.keepsShape());
+    dlg.setSize(2400, 2400);
+    tap(aspect, aspect->segmentRect(NewCanvasDialog::SixteenNine).center());
+    const QSize wide = dlg.pixelSize();
+    tap(portrait, centre(portrait));
+    const QSize tall = dlg.pixelSize();
+    drag(height, centre(height), QPointF(80, 0));
+    const QSize tallLonger = dlg.pixelSize();
+    tap(aspect, aspect->segmentRect(NewCanvasDialog::Paper).center());
+    const QSize paper = dlg.pixelSize();
+    check(QStringLiteral("16:9 on a square: %1 × %2 (kept); Portrait: %3 × %4; drag Height: %5 × %6; Paper: %7 × %8")
+              .arg(wide.width()).arg(wide.height()).arg(tall.width()).arg(tall.height())
+              .arg(tallLonger.width()).arg(tallLonger.height()).arg(paper.width()).arg(paper.height()),
+          wide == QSize(2400, 1350) && dlg.keepsShape() && tall == QSize(1350, 2400) && tallLonger.height() > 2400
+              && std::abs(tallLonger.height() * 9.0 / 16.0 - tallLonger.width()) <= 1.0 && aspect->current() == NewCanvasDialog::Paper
+              && paper.width() == tallLonger.width() && std::abs(paper.height() - paper.width() * std::sqrt(2.0)) <= 1.0);
+    dlg.setKeepShape(false);
+
+    // ---- Units and resolution with the pen.
+    dlg.setSize(2480, 3508);
+    tap(unitBar, unitBar->segmentRect(NewCanvasDialog::Centimetres).center());
+    const bool cmByPen = dlg.unit() == NewCanvasDialog::Centimetres && std::abs(dlg.shownWidth() - 21.0) < 0.01;
+    drag(dpi, centre(dpi), QPointF(-100, 0));
+    const int lower = dlg.resolution();
+    const bool dpiDrag = lower < 300 && lower >= 30 && std::abs(dlg.shownWidth() - 21.0) < 0.06
+                         && std::abs(dlg.pixelSize().width() - 21.0 / 2.54 * lower) <= 1.0;
+    check(QStringLiteral("tap cm: 21 cm wide; drag Resolution left: %1 dpi, still 21 cm, now %2 px").arg(lower).arg(dlg.pixelSize().width()),
+          cmByPen && dpiDrag);
+    dlg.setResolution(300);
+    dlg.setUnit(NewCanvasDialog::Pixels);
+
+    // ---- The background, seen in the preview.
+    auto middle = [&] { return preview->grab().toImage().pixelColor(preview->width() / 2 - 6, preview->height() / 2 - 7); };
+    dlg.setSize(2000, 2000);
+    tap(background, background->segmentRect(NewCanvasDialog::White).center());
+    const QColor white = middle();
+    tap(background, background->segmentRect(NewCanvasDialog::CurrentColour).center());
+    const QColor colour = middle();
+    tap(background, background->segmentRect(NewCanvasDialog::Transparent).center());
+    const QColor clear = middle();
+    check(QStringLiteral("the preview shows the background: white %1, the colour %2, transparent as a checker %3")
+              .arg(white.name(), colour.name(), clear.name()),
+          white == QColor(Qt::white) && colour == QColor(200, 60, 70) && clear != white && clear != colour && dlg.background() == NewCanvasDialog::Transparent);
+
+    // ---- Create with the pen.
+    dlg.setSize(1600, 1200);
+    tap(create, centre(create));
+    check(QStringLiteral("tap Create: accepted with 1600 × 1200 px, transparent"),
+          dlg.result() == QDialog::Accepted && dlg.pixelSize() == QSize(1600, 1200) && !dlg.isVisible());
+    dlg.hide();
+    for (const QString& line : log)
+        qInfo().noquote() << "canvas:" << line;
+    qInfo().noquote() << "canvas:" << (ok ? "ok" : "FAILED");
+    return ok;
+}
+
 int runUiShot(const QString& outPrefix)
 {
     std::signal(SIGTERM, dumpStackAndExit);
@@ -6083,6 +6389,8 @@ int runUiShot(const QString& outPrefix)
         return runModelUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
     if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("invoke"))
         return runInvokeUi(window, engine, penTap, penWindow, capture, settle) ? 0 : 2;
+    if (qEnvironmentVariable("IMPASTO_ONLY") == QLatin1String("canvas"))
+        return runNewCanvasUi(outPrefix, settle) ? 0 : 2;
     {
         QStringList log;
         bool penOk = true;
@@ -8601,54 +8909,8 @@ int runUiShot(const QString& outPrefix)
               wears(QMessageBox::Save, "save") && wears(QMessageBox::Discard, "trash") && wears(QMessageBox::Cancel, "close"));
         box.hide();
 
-        // New Canvas: a size on paper at a resolution, and what this card has room for.
-        {
-            NewCanvasDialog dlg(QSize(2560, 1440));
-            dlg.setAttribute(Qt::WA_DontShowOnScreen);
-            dlg.show();
-            settle();
-            const qint64 limit = CanvasEngine::maxCanvasPixels();
-            dlg.setUnit(NewCanvasDialog::Pixels);
-            dlg.setResolution(300);
-            dlg.setSize(2480, 3508);
-            const bool a4 = dlg.pixelSize() == QSize(2480, 3508) && dlg.presetText(dlg.currentPreset()).startsWith(QLatin1String("A4")) && dlg.fits()
-                            && dlg.roomText().contains(QStringLiteral("21 × 29.7 cm at 300 dpi"));
-            // The same sheet said in centimetres; a coarser print of it is fewer pixels.
-            dlg.setUnit(NewCanvasDialog::Centimetres);
-            const bool inCm = std::abs(dlg.shownWidth() - 21.0) < 0.01 && std::abs(dlg.shownHeight() - 29.7) < 0.01 && dlg.pixelSize() == QSize(2480, 3508);
-            dlg.setResolution(150);
-            const bool coarser = dlg.pixelSize() == QSize(1240, 1754) && std::abs(dlg.shownWidth() - 21.0) < 0.01;
-            check(QStringLiteral("new canvas: A4 is 2480 × 3508 px at 300 dpi, shows as 21 × 29.7 cm, and is 1240 × 1754 px at 150 dpi"), a4 && inCm && coarser);
-
-            // A metre square: fine at poster resolution, and at 300 dpi the dialog says what would fit instead.
-            dlg.setSize(100.0, 100.0);
-            const bool poster = dlg.pixelSize() == QSize(5906, 5906) && dlg.fits() && dlg.presetText(dlg.currentPreset()).startsWith(QLatin1String("1 m square"));
-            dlg.setResolution(300);
-            const QSize metre = dlg.pixelSize();
-            const bool metreFits = qint64(metre.width()) * metre.height() <= limit;
-            const int finest = NewCanvasDialog::finestResolution(100.0 / 2.54, 100.0 / 2.54);
-            const double atFinest = 100.0 / 2.54 * finest, pastFinest = 100.0 / 2.54 * (finest + 1);
-            const bool honest = metre == QSize(11811, 11811) && dlg.fits() == metreFits
-                                && (metreFits || dlg.roomText().contains(QStringLiteral("fits at up to %1 dpi").arg(finest)))
-                                && atFinest * atFinest <= double(limit) && (pastFinest * pastFinest > double(limit) || pastFinest > CanvasEngine::maxCanvasDimension());
-            dlg.accept();
-            const bool refused = metreFits || dlg.result() != QDialog::Accepted;
-            check(QStringLiteral("new canvas: 1 m × 1 m is 5906 px a side at 150 dpi; at 300 dpi it is 11811 px a side, which %1 here (a metre square fits at up to %2 dpi)")
-                      .arg(metreFits ? QStringLiteral("fits") : QStringLiteral("is refused with the reason")).arg(finest),
-                  poster && honest && refused);
-
-            // The largest square is offered by name, and is as large as it says.
-            dlg.choosePreset(dlg.presetCount() - 1);
-            const QSize largest = dlg.pixelSize();
-            const bool largestOk = dlg.fits() && dlg.unit() == NewCanvasDialog::Pixels && largest.width() == largest.height()
-                                   && qint64(largest.width() + 1) * (largest.width() + 1) > limit;
-            dlg.grab().save(QStringLiteral("%1-new-canvas.png").arg(outPrefix));
-            dlg.setUnit(NewCanvasDialog::Inches);
-            const bool inInches = std::abs(dlg.shownWidth() - largest.width() / 300.0) < 0.001 && dlg.pixelSize() == largest;
-            check(QStringLiteral("new canvas: the largest square this card holds is %1 px a side, %2 cm at 300 dpi").arg(largest.width()).arg(largest.width() / 300.0 * 2.54, 0, 'f', 1),
-                  largestOk && inInches);
-            dlg.hide();
-        }
+        // New Canvas, driven with the pen at its own window; its own lines are headed "canvas:".
+        check(QStringLiteral("new canvas dialog (see the canvas: lines)"), runNewCanvasUi(outPrefix, settle));
         for (const QString& line : log)
             qInfo().noquote() << "windows:" << line;
         qInfo().noquote() << "windows:" << (windowsOk ? "ok" : "FAILED");

@@ -1449,6 +1449,7 @@ bool MainWindow::newCanvas()
     const QScreen* scr = screen() ? screen() : QGuiApplication::primaryScreen();
     const QSize screenPx = scr ? scr->size() * scr->devicePixelRatio() : QSize(2560, 1440);
     NewCanvasDialog dlg(screenPx, this);
+    dlg.setCurrentColour(m_tools->color());
     if (dlg.exec() != QDialog::Accepted)
         return false;
     const QSize size = dlg.pixelSize();

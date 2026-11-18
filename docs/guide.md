@@ -99,12 +99,18 @@ that script for what it needs).
   picture, for about three layers' worth of paint. On an 8 GB card that is
   about 185 megapixels: 13,594 px square, or 115 cm square at 300 dpi; a
   metre square at 300 dpi (139 megapixels) has room for about three layers
-  filled edge to edge, and many more with less on them. *New Canvas* takes a
-  size in pixels or as a size on paper (mm, cm, inches) at a resolution, with
-  sheets up to A1 and the largest square the card holds among its presets;
-  it says how many pixels and megapixels that comes to and how much paint
-  there is room for, and when a sheet is too large, the finest resolution at
-  which it would fit. The resolution is kept with the document and written
+  filled edge to edge, and many more with less on them. *New Canvas* has
+  three columns: sizes to start from (screen, square, print sheets up to A1,
+  and the largest square the card holds), the size itself, and a preview of
+  the sheet with its background. Width, height and resolution change as you
+  drag them left or right, faster the further you go (hold Shift for single
+  steps); a tap types a number in instead, Enter takes it and Escape drops
+  it. The lock between width and height keeps the shape, and the shape
+  buttons (1:1, 4:3, 3:2, 16:9, Paper) set one and keep it. Portrait and
+  Landscape under the preview turn the sheet. The size can be in pixels or
+  on paper (mm, cm, inches) at a resolution; the dialog says how many pixels
+  and megapixels that comes to and how much paint there is room for, and when
+  a sheet is too large, the finest resolution at which it would fit. The resolution is kept with the document and written
   into exported pictures. When memory does run short, the working copies kept
   for speed go first, then the oldest undo steps (with a notice), and paint
   that still does not fit is refused with the reason rather than lost.

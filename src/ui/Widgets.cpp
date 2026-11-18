@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -13,6 +14,7 @@
 #include <QTabletEvent>
 #include <QVBoxLayout>
 #include <QWheelEvent>
+#include <algorithm>
 #include <cmath>
 
 // -------------------------------------------------------------- IconButton
@@ -948,7 +950,7 @@ SegmentBar::SegmentBar(const QStringList& labels, QWidget* parent) : QWidget(par
 
 void SegmentBar::setCurrent(int index)
 {
-    index = std::clamp(index, 0, int(m_labels.size()) - 1);
+    index = std::clamp(index, -1, int(m_labels.size()) - 1);   // -1: none of them
     if (index == m_current)
         return;
     m_current = index;
@@ -981,7 +983,8 @@ void SegmentBar::paintEvent(QPaintEvent*)
     p.setBrush(QColor(0x1f, 0x1f, 0x22));
     p.drawRoundedRect(QRectF(rect()), 8, 8);
     p.setBrush(QColor(0x52, 0x52, 0x58));
-    p.drawRoundedRect(segmentRect(m_current).adjusted(2, 2, -2, -2), 6, 6);
+    if (m_current >= 0)
+        p.drawRoundedRect(segmentRect(m_current).adjusted(2, 2, -2, -2), 6, 6);
     p.setFont(theme::font(12, QFont::Medium));
     for (int i = 0; i < m_labels.size(); ++i) {
         p.setPen(i == m_current ? theme::text : theme::textDim);
@@ -1059,4 +1062,331 @@ void SwatchGrid::mousePressEvent(QMouseEvent* e)
             return;
         }
     }
+}
+
+// -------------------------------------------------------------- ValueField
+
+ValueField::ValueField(const QString& label, QWidget* parent) : QWidget(parent), m_label(label)
+{
+    setCursor(Qt::SizeHorCursor);
+    setFocusPolicy(Qt::StrongFocus);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setFixedHeight(38);
+    m_edit = new QLineEdit(this);
+    m_edit->setObjectName(QStringLiteral("value-edit"));
+    m_edit->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_edit->setFont(theme::font(14, QFont::DemiBold));
+    m_edit->setStyleSheet(QStringLiteral("QLineEdit { background: transparent; border: none; padding: 0; color: #f2f2f7;"
+                                         " selection-background-color: #0a84ff; }"));
+    m_edit->hide();
+    m_edit->installEventFilter(this);
+}
+
+QString ValueField::number(double v) const
+{
+    QString s = QString::number(v, 'f', m_decimals);
+    if (s.contains(QLatin1Char('.'))) {
+        while (s.endsWith(QLatin1Char('0')))
+            s.chop(1);
+        if (s.endsWith(QLatin1Char('.')))
+            s.chop(1);
+    }
+    return s;
+}
+
+double ValueField::fitted(double v, double snap) const
+{
+    if (snap > 0.0)
+        v = std::round(v / snap) * snap;
+    const double scale = std::pow(10.0, m_decimals);
+    v = std::round(v * scale) / scale;
+    return std::clamp(v, m_min, m_max);
+}
+
+void ValueField::setValue(double v)
+{
+    v = fitted(v, 0.0);
+    if (v == m_value)
+        return;
+    m_value = v;
+    update();
+}
+
+void ValueField::setRange(double min, double max)
+{
+    m_min = min;
+    m_max = std::max(min, max);
+    m_value = std::clamp(m_value, m_min, m_max);
+    update();
+}
+
+void ValueField::setDecimals(int decimals)
+{
+    m_decimals = std::max(0, decimals);
+    update();
+}
+
+void ValueField::setSuffix(const QString& suffix)
+{
+    m_suffix = suffix;
+    update();
+}
+
+void ValueField::setDragStep(double perPixel, double snap)
+{
+    m_perPixel = perPixel;
+    m_snap = snap;
+}
+
+void ValueField::setStep(double step)
+{
+    m_step = step;
+}
+
+QString ValueField::shownText() const
+{
+    return m_suffix.isEmpty() ? number(m_value) : number(m_value) + QLatin1Char(' ') + m_suffix;
+}
+
+void ValueField::change(double v)
+{
+    v = std::clamp(v, m_min, m_max);
+    if (v == m_value)
+        return;
+    m_value = v;
+    update();
+    emit valueChanged(m_value);
+}
+
+QRect ValueField::editRect() const
+{
+    const QFontMetrics fm(theme::font(13));
+    const int left = 14 + fm.horizontalAdvance(m_label) + 12;
+    const int suffix = m_suffix.isEmpty() ? 0 : QFontMetrics(theme::font(13)).horizontalAdvance(m_suffix) + 6;
+    return QRect(left, 4, std::max(40, width() - left - 14 - suffix), height() - 8);
+}
+
+bool ValueField::isEditing() const
+{
+    return m_edit->isVisible();
+}
+
+void ValueField::startEditing(const QString& typed)
+{
+    m_edit->setGeometry(editRect());
+    m_edit->setText(typed.isEmpty() ? number(m_value) : typed);
+    m_edit->show();
+    m_edit->setFocus(Qt::OtherFocusReason);
+    if (typed.isEmpty())
+        m_edit->selectAll();
+    else
+        m_edit->end(false);
+    update();
+}
+
+void ValueField::finishEditing()
+{
+    if (!isEditing())
+        return;
+    QString t = m_edit->text().trimmed();
+    t.replace(QLatin1Char(','), QLatin1Char('.'));
+    // Whatever unit was typed after the number is the one showing already.
+    int end = 0;
+    while (end < t.size() && (t[end].isDigit() || t[end] == QLatin1Char('.') || (end == 0 && t[end] == QLatin1Char('-'))))
+        ++end;
+    bool ok = false;
+    const double v = t.left(end).toDouble(&ok);
+    m_edit->hide();
+    if (ok)
+        change(fitted(v, 0.0));
+    setFocus(Qt::OtherFocusReason);
+    update();
+}
+
+void ValueField::cancelEditing()
+{
+    m_edit->hide();
+    setFocus(Qt::OtherFocusReason);
+    update();
+}
+
+bool ValueField::eventFilter(QObject* obj, QEvent* e)
+{
+    if (obj == m_edit) {
+        if (e->type() == QEvent::KeyPress) {
+            const auto* k = static_cast<QKeyEvent*>(e);
+            if (k->key() == Qt::Key_Return || k->key() == Qt::Key_Enter || k->key() == Qt::Key_Tab) {
+                // Enter takes the number; it does not also press a dialog's default button.
+                finishEditing();
+                if (k->key() == Qt::Key_Tab)
+                    focusNextChild();
+                return true;
+            }
+            if (k->key() == Qt::Key_Escape) {
+                cancelEditing();
+                return true;
+            }
+        } else if (e->type() == QEvent::ShortcutOverride) {
+            const auto* k = static_cast<QKeyEvent*>(e);
+            if (k->key() == Qt::Key_Escape) {
+                e->accept();   // Escape leaves the typing, not the dialog
+                return true;
+            }
+        } else if (e->type() == QEvent::FocusOut && isEditing()) {
+            finishEditing();
+        }
+    }
+    return QWidget::eventFilter(obj, e);
+}
+
+void ValueField::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    const bool live = m_dragging || isEditing();
+    p.setBrush(m_dragging ? QColor(0x26, 0x26, 0x2a) : QColor(0x1f, 0x1f, 0x22));
+    p.setPen(QPen(live || hasFocus() ? theme::accent : m_hover && isEnabled() ? QColor(0x5a, 0x5a, 0x60) : QColor(0x48, 0x48, 0x4d), live ? 1.5 : 1.0));
+    p.drawRoundedRect(r, 9, 9);
+
+    const QColor dim = isEnabled() ? theme::textDim : QColor(0x77, 0x77, 0x7d);
+    p.setFont(theme::font(13));
+    p.setPen(dim);
+    p.drawText(QRectF(14, 0, width() - 28, height()), Qt::AlignLeft | Qt::AlignVCenter, m_label);
+
+    // Arrows at both ends while it can be dragged: which way is more, which less.
+    if ((m_hover || m_dragging) && isEnabled() && !isEditing()) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_dragging ? theme::accent : QColor(0x77, 0x77, 0x7d));
+        const qreal cy = height() / 2.0;
+        p.drawPolygon(QPolygonF({QPointF(4, cy), QPointF(8, cy - 4), QPointF(8, cy + 4)}));
+        p.drawPolygon(QPolygonF({QPointF(width() - 4, cy), QPointF(width() - 8, cy - 4), QPointF(width() - 8, cy + 4)}));
+    }
+
+    QFontMetrics sm(theme::font(13));
+    int right = width() - 14;
+    if (!m_suffix.isEmpty()) {
+        p.setFont(theme::font(13));
+        p.setPen(dim);
+        p.drawText(QRectF(0, 0, right, height()), Qt::AlignRight | Qt::AlignVCenter, m_suffix);
+        right -= sm.horizontalAdvance(m_suffix) + 6;
+    }
+    if (isEditing())
+        return;
+    p.setFont(theme::font(14, QFont::DemiBold));
+    p.setPen(isEnabled() ? (m_dragging ? theme::accent : theme::text) : dim);
+    p.drawText(QRectF(0, 0, right, height()), Qt::AlignRight | Qt::AlignVCenter, number(m_value));
+}
+
+void ValueField::mousePressEvent(QMouseEvent* e)
+{
+    if (e->button() != Qt::LeftButton || isEditing()) {
+        QWidget::mousePressEvent(e);
+        return;
+    }
+    m_pressed = true;
+    m_dragging = false;
+    m_pressPos = e->position();
+    m_pressValue = m_value;
+    e->accept();
+}
+
+void ValueField::mouseMoveEvent(QMouseEvent* e)
+{
+    if (!m_pressed)
+        return;
+    const double dx = e->position().x() - m_pressPos.x();
+    if (!m_dragging) {
+        if (std::abs(dx) < kDragThreshold)
+            return;
+        m_dragging = true;
+        setFocus(Qt::MouseFocusReason);
+        emit dragStarted();
+        update();
+    }
+    // Measured from where the drag took hold, so the value does not jump; it
+    // speeds up the further it goes, so a short drag is fine and a long one far.
+    const double d = dx - std::copysign(double(kDragThreshold), dx);
+    double delta = m_perPixel * d * (1.0 + std::abs(d) / 160.0);
+    if (e->modifiers() & Qt::ShiftModifier)
+        delta *= 0.1;
+    change(fitted(m_pressValue + delta, (e->modifiers() & Qt::ShiftModifier) ? 0.0 : m_snap));
+}
+
+void ValueField::mouseReleaseEvent(QMouseEvent* e)
+{
+    if (e->button() != Qt::LeftButton || !m_pressed)
+        return;
+    m_pressed = false;
+    if (m_dragging) {
+        m_dragging = false;
+        update();
+        emit dragFinished();
+    } else if (isEnabled() && rect().contains(e->position().toPoint())) {
+        startEditing();
+    }
+}
+
+void ValueField::wheelEvent(QWheelEvent* e)
+{
+    const int notches = e->angleDelta().y() / 120;
+    if (notches == 0 || isEditing()) {
+        e->ignore();
+        return;
+    }
+    change(fitted(m_value + notches * m_step, 0.0));
+    e->accept();
+}
+
+void ValueField::keyPressEvent(QKeyEvent* e)
+{
+    switch (e->key()) {
+    case Qt::Key_Up:
+    case Qt::Key_Right:
+        change(fitted(m_value + m_step, 0.0));
+        return;
+    case Qt::Key_Down:
+    case Qt::Key_Left:
+        change(fitted(m_value - m_step, 0.0));
+        return;
+    case Qt::Key_Space:
+    case Qt::Key_F2:
+        startEditing();
+        return;
+    default:
+        break;
+    }
+    // Typing a number into the field starts writing it.
+    const QString t = e->text();
+    if (t.size() == 1 && (t[0].isDigit() || t[0] == QLatin1Char('.') || t[0] == QLatin1Char(','))) {
+        startEditing(t);
+        return;
+    }
+    QWidget::keyPressEvent(e);
+}
+
+void ValueField::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    if (isEditing())
+        m_edit->setGeometry(editRect());
+}
+
+void ValueField::enterEvent(QEnterEvent*)
+{
+    m_hover = true;
+    update();
+}
+
+void ValueField::leaveEvent(QEvent*)
+{
+    m_hover = false;
+    update();
+}
+
+void ValueField::changeEvent(QEvent* e)
+{
+    if (e->type() == QEvent::EnabledChange && !isEnabled() && isEditing())
+        cancelEditing();
+    QWidget::changeEvent(e);
 }

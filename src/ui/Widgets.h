@@ -288,7 +288,7 @@ class SegmentBar : public QWidget {
 public:
     explicit SegmentBar(const QStringList& labels, QWidget* parent = nullptr);
     int current() const { return m_current; }
-    void setCurrent(int index);   // does not emit
+    void setCurrent(int index);   // does not emit; -1 marks none of them
     QRectF segmentRect(int index) const;
     QSize sizeHint() const override { return {260, 28}; }
 
@@ -302,6 +302,69 @@ protected:
 private:
     QStringList m_labels;
     int m_current = 0;
+};
+
+// A number with its name, in a field. Press on it and drag left or right to
+// change it, the further the faster (Shift for fine steps); a tap without
+// moving types it in instead. The wheel and the arrow keys step it.
+class QLineEdit;
+class ValueField : public QWidget {
+    Q_OBJECT
+public:
+    explicit ValueField(const QString& label, QWidget* parent = nullptr);
+    double value() const { return m_value; }
+    void setValue(double v);   // does not emit
+    void setRange(double min, double max);
+    double minimum() const { return m_min; }
+    double maximum() const { return m_max; }
+    void setDecimals(int decimals);
+    void setSuffix(const QString& suffix);
+    // What a pixel of dragging is worth at first, and what a dragged value is
+    // rounded to (0: its decimals).
+    void setDragStep(double perPixel, double snap = 0.0);
+    void setStep(double step);   // for the wheel and the arrow keys
+    QString shownText() const;   // the value as the field shows it
+    bool isEditing() const;
+    void startEditing(const QString& typed = QString());
+    void finishEditing();        // takes what was typed, if anything is being typed
+    QSize sizeHint() const override { return {220, 38}; }
+
+    // A drag must go this far before it counts, so a resting pen's wander stays a tap.
+    static constexpr int kDragThreshold = 6;
+
+signals:
+    void valueChanged(double v);   // by the user: dragging, typing, the wheel or keys
+    void dragStarted();
+    void dragFinished();
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void wheelEvent(QWheelEvent* e) override;
+    void keyPressEvent(QKeyEvent* e) override;
+    void resizeEvent(QResizeEvent* e) override;
+    void enterEvent(QEnterEvent*) override;
+    void leaveEvent(QEvent*) override;
+    void changeEvent(QEvent* e) override;
+    bool eventFilter(QObject* obj, QEvent* e) override;
+
+private:
+    double fitted(double v, double snap) const;
+    void change(double v);
+    void cancelEditing();
+    QRect editRect() const;
+    QString number(double v) const;
+
+    QString m_label, m_suffix;
+    double m_value = 0, m_min = 0, m_max = 100;
+    double m_perPixel = 1, m_snap = 0, m_step = 1;
+    int m_decimals = 0;
+    QLineEdit* m_edit = nullptr;
+    bool m_pressed = false, m_dragging = false, m_hover = false;
+    QPointF m_pressPos;
+    double m_pressValue = 0;
 };
 
 // Grid of colour chips.

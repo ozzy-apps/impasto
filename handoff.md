@@ -27,6 +27,13 @@ Impasto is a C++20, Qt 6 Widgets and OpenGL 4.3 painting app for Linux and Windo
 - Ctrl+Enter (and keypad Enter) in either prompt generates or says why it cannot: the panel's event filter accepts the `ShortcutOverride`, so the window's own Ctrl+Enter shortcut does not take it.
 - Check: `IMPASTO_ONLY=invoke build/impasto --ui-shot out/ui` (26 checks, writes `ui-invoke.png` and `ui-invoke-bottom.png`); `IMPASTO_INVOKE_LIVE=1` also connects to Invoke at the default address and lists its models, without generating. The full `--ui-shot` run passed. The key check replays Qt's ShortcutOverride-then-KeyPress order on the prompt; real keys through the shortcut map were not driven (the QPA headers are not installed). Not regenerated after this pass: a live generation, so the feather on a real result has not been seen.
 
+## New Canvas redesign (2026-11-18, after the release; not released)
+
+- `NewCanvasDialog` is now three columns, about 950 × 500: a preset list with shape glyphs under headings (Screen, Square, Print, This graphics card; DragScroller for the pen), the size (Width and Height as `ValueField`s with a `ShapeLock` bracket between them, shape `SegmentBar` 1:1/4:3/3:2/16:9/Paper, unit `SegmentBar`, Resolution field, Background `SegmentBar`) and a `Preview` of the sheet with its sides measured, Portrait/Landscape buttons and the room line. Create is disabled while the size does not fit. Background is remembered with dpi and unit. MainWindow passes the current colour for the Colour background.
+- New `ValueField` in `Widgets.h`: drag left/right to change (6 px before a drag counts, accelerating, snapped: 8 px, 1 mm, 0.1 cm, 0.05 in, 1 dpi; Shift fine), tap to type (comma or point; Enter commits without pressing the dialog's default button; Escape cancels without closing the dialog), wheel and arrow keys step. `SegmentBar::setCurrent(-1)` now shows none chosen. New icons `portrait`, `landscape`, `unlock`.
+- The paper size is kept in inches (`m_paper`) as it was given, so a resolution change in a paper unit does not drift by a pixel (1 m at 150 → 300 dpi is 11811 px, not 11812).
+- Check: `IMPASTO_ONLY=canvas build/impasto --ui-shot out/ui` (15 checks, pen events at the dialog's own window; writes `ui-new-canvas*.png`). The full run calls the same checks from its windows section. The `exec()` in `MainWindow::newCanvas` is still not driven.
+
 ## Next steps
 
 1. Validate packaged builds on Linux and Windows, including TLS and the Flatpak connection. This iteration provides a local Linux build.
